@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "strict": true,
+    "noEmit": true,
+    "erasableSyntaxOnly": true,
+    "verbatimModuleSyntax": true,
+    "allowImportingTsExtensions": true,
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "target": "es2024",
+    "lib": ["es2024"],
+    "types": [],
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noUncheckedIndexedAccess": true,
+    "isolatedModules": true
+  }
+}

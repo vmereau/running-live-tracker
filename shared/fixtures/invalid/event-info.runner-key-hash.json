@@ -1,0 +1,4 @@
+{
+  "eventId": "test-run", "name": "Test run", "hasCourse": false, "lengthM": null,
+  "runners": [ { "runnerId": "alice", "displayName": "Alice", "color": "#e6194b", "keyHash": "0000000000000000000000000000000000000000000000000000000000000000" } ]
+}

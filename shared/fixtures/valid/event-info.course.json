@@ -1,0 +1,10 @@
+{
+  "eventId": "paris-marathon",
+  "name": "Paris Marathon",
+  "hasCourse": true,
+  "lengthM": 42195,
+  "runners": [
+    { "runnerId": "alice", "displayName": "Alice", "color": "#e6194b" },
+    { "runnerId": "bob", "displayName": "Bob", "color": "#3CB44B" }
+  ]
+}

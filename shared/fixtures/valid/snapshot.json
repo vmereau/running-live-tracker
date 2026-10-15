@@ -1,0 +1,11 @@
+{
+  "serverNow": 1760003602000,
+  "event": { "eventId": "test-run", "name": "Test run", "hasCourse": false, "lengthM": null,
+    "runners": [ { "runnerId": "alice", "displayName": "Alice", "color": "#e6194b" } ] },
+  "runners": [
+    { "runnerId": "alice", "status": "stopped", "runStartedAt": 1760000000000, "runEndedAt": 1760003600000, "lastFixAt": 1760003595000,
+      "lastReceivedAt": 1760003601200, "lastPosition": { "lat": 48.87, "lon": 2.33 }, "distanceM": 12000, "progressM": null,
+      "remainingM": null, "progressFraction": null, "offCourse": false, "avgPaceSPerKm": 300, "currentPaceSPerKm": null, "etaAt": null }
+  ],
+  "tracks": { "alice": [ { "lat": 48.8566, "lon": 2.3522, "recordedAt": 1760000000000 }, { "lat": 48.87, "lon": 2.33, "recordedAt": 1760003595000 } ] }
+}

@@ -1,0 +1,22 @@
+{
+  "name": "running-live-tracker",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@12.11.2",
+  "engines": {
+    "node": ">=24.22.0"
+  },
+  "scripts": {
+    "check": "pnpm typecheck && pnpm test && pnpm depcruise",
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm -r test",
+    "depcruise": "depcruise server shared web --config .dependency-cruiser.cjs",
+    "dev": "node server/src/main.ts",
+    "prepare": "git config core.hooksPath .githooks"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "dependency-cruiser": "18.6.0",
+    "typescript": "7.0.2"
+  }
+}

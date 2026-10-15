@@ -1,0 +1,9 @@
+{
+  "sessionId": "3f1c2b9e-8a4d-4c6e-9b2a-1d5e7f0a3c48",
+  "sessionStartedAt": 1760000000000,
+  "records": [
+    { "seq": 0, "kind": "fix", "recordedAt": 1760000000000, "lat": 48.8566, "lon": 2.3522, "accuracyM": 4.5, "altitudeM": 35.2, "speedMps": 3.1 },
+    { "seq": 1, "kind": "fix", "recordedAt": 1760000005000, "lat": 48.8567, "lon": 2.3524, "accuracyM": 5 },
+    { "seq": 3, "kind": "end", "recordedAt": 1760000010000 }
+  ]
+}

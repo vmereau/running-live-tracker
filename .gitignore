@@ -1,2 +1,7 @@
 /.claude/skills
 /_bmad
+node_modules/
+config/event.json
+config/courses/
+data/
+web/dist/

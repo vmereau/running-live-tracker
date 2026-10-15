@@ -1,0 +1,5 @@
+{
+  "sessionId": "6fa459ea-ee8a-11ca-8c51-0242ac120002",
+  "sessionStartedAt": 1760000000000,
+  "records": [ { "seq": 0, "kind": "fix", "recordedAt": 1760000000000, "lat": 0, "lon": 0, "accuracyM": 5 } ]
+}

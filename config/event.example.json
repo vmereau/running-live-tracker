@@ -1,0 +1,20 @@
+{
+  "eventId": "example",
+  "name": "Example event",
+  "opensAt": 1767225600000,
+  "closesAt": 1767312000000,
+  "runners": [
+    {
+      "runnerId": "alice",
+      "displayName": "Alice",
+      "color": "#e6194b",
+      "keyHash": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "runnerId": "bob",
+      "displayName": "Bob",
+      "color": "#3cb44b",
+      "keyHash": "1111111111111111111111111111111111111111111111111111111111111111"
+    }
+  ]
+}

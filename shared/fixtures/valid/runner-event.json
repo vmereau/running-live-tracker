@@ -1,0 +1,6 @@
+{
+  "serverNow": 1760000006000,
+  "view": { "runnerId": "bob", "status": "notStarted", "runStartedAt": null, "runEndedAt": null, "lastFixAt": null,
+    "lastReceivedAt": 1760000005500, "lastPosition": null, "distanceM": 0, "progressM": null, "remainingM": null,
+    "progressFraction": null, "offCourse": false, "avgPaceSPerKm": null, "currentPaceSPerKm": null, "etaAt": null }
+}

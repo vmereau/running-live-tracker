@@ -1,0 +1,16 @@
+{
+  "name": "@running-live-tracker/shared",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/contract.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "node --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}

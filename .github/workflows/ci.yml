@@ -1,0 +1,23 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - name: Enable pnpm via corepack
+        run: corepack enable
+      - name: Install
+        run: pnpm install --frozen-lockfile
+      - name: Check (typecheck, tests, dependency graph)
+        run: pnpm check
+      - name: Build web
+        run: pnpm --filter @running-live-tracker/web build

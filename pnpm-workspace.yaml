@@ -1,0 +1,13 @@
+packages:
+  - server
+  - web
+  - shared
+
+injectWorkspacePackages: false
+
+# dependency-cruiser parses .ts via the typescript JS API, which TS 7 does not ship.
+# Give it its own TS 6 (aliased) so the root tsc stays TS 7.0.2.
+packageExtensions:
+  dependency-cruiser@18.6.0:
+    dependencies:
+      typescript: npm:@typescript/typescript6@6.0.2

@@ -1,0 +1,5 @@
+{
+  "runnerId": "alice", "status": "active", "runStartedAt": 1760000000000, "runEndedAt": null, "lastFixAt": 1760003600000,
+  "lastReceivedAt": 1760003601200, "lastPosition": { "lat": 48.87, "lon": 2.33 }, "distanceM": 12000, "progressM": 12000,
+  "remainingM": 30195, "progressFraction": 1.2, "offCourse": false, "avgPaceSPerKm": 300, "currentPaceSPerKm": 290.5, "etaAt": null
+}
