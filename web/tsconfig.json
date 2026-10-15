@@ -6,5 +6,6 @@
     "lib": ["es2024", "dom", "dom.iterable"],
     "types": ["vite/client"]
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": ["src/**/*.test.ts"]
 }

@@ -62,6 +62,9 @@ test('boots with the example config and listens on 127.0.0.1 only', async () => 
     assert.ok(listening, 'expected a "Server listening at" log line');
     assert.equal(listening['msg'], `Server listening at http://127.0.0.1:${port}`);
 
+    const ready = logs.find((l) => l['msg'] === 'server ready');
+    assert.equal(ready?.['webRoot'], join(import.meta.dirname, '..', '..', 'web', 'dist'));
+
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
     assert.equal(res.status, 200);
     assert.deepEqual(((await res.json()) as { eventId: string }).eventId, 'example');

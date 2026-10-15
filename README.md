@@ -8,7 +8,7 @@ This repo is a pnpm workspace:
 | Package | Path | What it is |
 | --- | --- | --- |
 | `@running-live-tracker/server` | `server/` | Fastify server, run directly by Node (native type stripping) |
-| `@running-live-tracker/web` | `web/` | Vite app (vanilla TS); the server will serve it at `/` from Story 1.6 |
+| `@running-live-tracker/web` | `web/` | Vite app (vanilla TS), served by the server at `/` from `web/dist/` (for now a live-stream diagnostic page; the map arrives in Story 1.6) |
 | `@running-live-tracker/shared` | `shared/` | Wire contract (`src/contract.ts`, zod) and JSON fixtures |
 
 ## Prerequisites
@@ -45,12 +45,28 @@ cp config/event.example.json config/event.json
 | `pnpm dev` | Start the server on `127.0.0.1` |
 | `pnpm --filter web build` | Build the web app into `web/dist/` |
 
-Health check once the server runs:
+## HTTP API
+
+All read endpoints are public (no auth). The server binds `127.0.0.1` only.
+
+| Endpoint | What it returns |
+| --- | --- |
+| `GET /api/v1/health` | `{"ok":true,"serverNow":...,"eventId":"..."}` |
+| `GET /api/v1/snapshot` | The current `Snapshot` (event info, one view and one track per runner). Polling fallback. |
+| `GET /api/v1/live` | Server-Sent Events: an `event: snapshot` frame on connect, then a `: ping` comment every 20 s |
+| `GET /` | The built web app from `web/dist/` (run `pnpm --filter web build` first; skipped with a warning if missing) |
 
 ```sh
 curl http://127.0.0.1:8787/api/v1/health
-# {"ok":true,"serverNow":...,"eventId":"..."}
+curl -N http://127.0.0.1:8787/api/v1/live
 ```
+
+Until Story 1.5 every runner is `notStarted` with an empty track.
+
+## Public access
+
+Spectators reach the server only through Tailscale Funnel. Setup, commands and the
+Story 1.2 live-stream test: [docs/ops/tailscale-funnel.md](docs/ops/tailscale-funnel.md).
 
 ## Environment variables
 

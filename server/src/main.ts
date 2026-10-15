@@ -15,6 +15,7 @@ if (!(port >= 1 && port <= 65535)) {
 }
 const dataDir = resolve(process.env['DATA_DIR'] ?? resolve(repoRoot, 'data'));
 const configPath = resolve(process.env['EVENT_CONFIG'] ?? resolve(repoRoot, 'config', 'event.json'));
+const webRoot = resolve(repoRoot, 'web', 'dist'); // built by `pnpm --filter web build`
 
 let config: EventConfig;
 try {
@@ -28,10 +29,10 @@ try {
 }
 
 // JSON logs to stdout; writing them under data/logs is Story 4.2.
-const app = buildApp({ config, now: Date.now, logger: true });
+const app = buildApp({ config, now: Date.now, logger: true, webRoot });
 try {
   await app.listen({ host: HOST, port });
-  app.log.info({ eventId: config.eventId, configPath, dataDir }, 'server ready');
+  app.log.info({ eventId: config.eventId, configPath, dataDir, webRoot }, 'server ready');
 } catch (err) {
   app.log.error({ err }, 'failed to start');
   process.exit(1);

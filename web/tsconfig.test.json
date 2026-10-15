@@ -1,0 +1,9 @@
+{
+  // Tests run under node:test, so they (and only they) see Node types.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["vite/client", "node"]
+  },
+  "include": ["src/**/*.test.ts"],
+  "exclude": []
+}

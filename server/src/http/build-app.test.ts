@@ -1,6 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ErrorBody } from '@running-live-tracker/shared';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import type { FastifyInstance } from 'fastify';
+import { ErrorBody, Snapshot } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
 import { buildApp } from './build-app.ts';
 
@@ -77,5 +82,171 @@ test('body over the limit returns 413 PAYLOAD_TOO_LARGE', async () => {
   });
   assert.equal(res.statusCode, 413);
   assert.equal(ErrorBody.parse(res.json()).error.code, 'PAYLOAD_TOO_LARGE');
+  await app.close();
+});
+
+// ---- Story 1.2: snapshot, live stream, static web app ----
+
+const keyHashes = ['a'.repeat(64)];
+
+function assertNoSecrets(text: string) {
+  assert.ok(!text.includes('keyHash'), 'body must not contain keyHash');
+  for (const h of keyHashes) assert.ok(!text.includes(h), 'body must not contain a key hash value');
+}
+
+test('GET /api/v1/snapshot returns the notStarted snapshot without secrets', async () => {
+  const app = makeApp();
+  const res = await app.inject({ method: 'GET', url: '/api/v1/snapshot' });
+  assert.equal(res.statusCode, 200);
+  assertNoSecrets(res.body);
+  const snap = Snapshot.parse(res.json());
+  assert.equal(snap.serverNow, 1_760_000_000_123);
+  assert.deepStrictEqual(snap.event, {
+    eventId: 'test-run',
+    name: 'Test run',
+    hasCourse: false,
+    lengthM: null,
+    runners: [{ runnerId: 'alice', displayName: 'Alice', color: '#e6194b' }],
+  });
+  assert.deepStrictEqual(
+    snap.runners.map((r) => [r.runnerId, r.status, r.distanceM, r.lastPosition]),
+    [['alice', 'notStarted', 0, null]],
+  );
+  assert.deepStrictEqual(snap.tracks, { alice: [] });
+  await app.close();
+});
+
+async function listen(app: FastifyInstance): Promise<string> {
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  const { port } = app.server.address() as AddressInfo;
+  return `http://127.0.0.1:${port}`;
+}
+
+async function readUntil(body: ReadableStream<Uint8Array>, predicate: (text: string) => boolean, timeoutMs = 2_000) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let text = '';
+  const deadline = setTimeout(() => void reader.cancel(), timeoutMs);
+  try {
+    while (!predicate(text)) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    clearTimeout(deadline);
+  }
+  return { text, reader };
+}
+
+test('GET /api/v1/live streams SSE headers, a snapshot first, then pings', async () => {
+  const app = buildApp({ config, now: () => 1_760_000_000_123, pingIntervalMs: 40 });
+  const base = await listen(app);
+  try {
+    const res = await fetch(`${base}/api/v1/live`, { headers: { 'accept-encoding': 'gzip, br' } });
+    assert.equal(res.status, 200);
+    assert.equal(res.headers.get('content-type'), 'text/event-stream');
+    assert.equal(res.headers.get('cache-control'), 'no-cache, no-transform');
+    assert.equal(res.headers.get('x-accel-buffering'), 'no');
+    assert.equal(res.headers.get('content-encoding'), null);
+    const { text, reader } = await readUntil(res.body!, (t) => t.split(': ping\n\n').length > 2);
+    assertNoSecrets(text);
+    const [frame, ...rest] = text.split('\n\n');
+    const lines = frame!.split('\n');
+    assert.equal(lines.length, 2);
+    assert.equal(lines[0], 'event: snapshot');
+    assert.ok(lines[1]!.startsWith('data: '));
+    const snap = Snapshot.parse(JSON.parse(lines[1]!.slice('data: '.length)));
+    const viaGet = await app.inject({ method: 'GET', url: '/api/v1/snapshot' });
+    assert.deepStrictEqual(snap, viaGet.json());
+    assert.deepStrictEqual(rest.filter((f) => f !== ''), [': ping', ': ping']);
+    await reader.cancel();
+  } finally {
+    await app.close();
+  }
+});
+
+test('app.close() ends open live streams and resolves', async () => {
+  const app = buildApp({ config, now: () => 0, pingIntervalMs: 60_000 });
+  const base = await listen(app);
+  const streams = await Promise.all([fetch(`${base}/api/v1/live`), fetch(`${base}/api/v1/live`)]);
+  const readers = [];
+  for (const res of streams) readers.push((await readUntil(res.body!, (t) => t.includes('\n\n'))).reader);
+  const started = Date.now();
+  await app.close();
+  assert.ok(Date.now() - started < 1_000, 'close should not wait for the streams');
+  for (const reader of readers) {
+    // Drain anything still buffered; the stream must then report its end, promptly.
+    const drain = (async () => {
+      let chunk = await reader.read();
+      while (!chunk.done) chunk = await reader.read();
+    })();
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(new Error('stream did not end after app.close()')), 1_000);
+    });
+    try {
+      await Promise.race([drain, deadline]);
+    } finally {
+      clearTimeout(timer);
+      void reader.cancel().catch(() => {});
+    }
+  }
+});
+
+test('client abort does not break the server', async () => {
+  const app = buildApp({ config, now: () => 0, pingIntervalMs: 20 });
+  const base = await listen(app);
+  try {
+    const controller = new AbortController();
+    const res = await fetch(`${base}/api/v1/live`, { signal: controller.signal });
+    await readUntil(res.body!, (t) => t.includes('\n\n'));
+    controller.abort();
+    await new Promise((r) => setTimeout(r, 100));
+    const health = await fetch(`${base}/api/v1/health`);
+    assert.equal(health.status, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('webRoot directory is served at /, /api misses stay JSON 404', async () => {
+  const webRoot = mkdtempSync(join(tmpdir(), 'rlt-web-'));
+  writeFileSync(join(webRoot, 'index.html'), '<!doctype html><title>diag</title>');
+  const app = buildApp({ config, now: () => 0, webRoot });
+  try {
+    const index = await app.inject({ method: 'GET', url: '/' });
+    assert.equal(index.statusCode, 200);
+    assert.match(String(index.headers['content-type']), /text\/html/);
+    assert.match(index.body, /diag/);
+    const miss = await app.inject({ method: 'GET', url: '/api/v1/nope' });
+    assert.equal(miss.statusCode, 404);
+    assert.equal(ErrorBody.parse(miss.json()).error.code, 'NOT_FOUND');
+    const health = await app.inject({ method: 'GET', url: '/api/v1/health' });
+    assert.equal(health.statusCode, 200);
+  } finally {
+    await app.close();
+  }
+});
+
+test('missing webRoot logs a warning and serves no web app', async () => {
+  const webRoot = join(tmpdir(), 'rlt-web-does-not-exist');
+  const logs: string[] = [];
+  const stream = { write: (line: string) => void logs.push(line) };
+  const app = buildApp({ config, now: () => 0, webRoot, logger: { level: 'warn', stream } });
+  try {
+    const res = await app.inject({ method: 'GET', url: '/' });
+    assert.equal(res.statusCode, 404);
+    assert.equal(ErrorBody.parse(res.json()).error.code, 'NOT_FOUND');
+    assert.ok(logs.some((l) => l.includes('web build not found')), logs.join('\n'));
+  } finally {
+    await app.close();
+  }
+});
+
+test('HEAD /api/v1/live is not routed (a hijacked HEAD would hang)', async () => {
+  const app = makeApp();
+  const res = await app.inject({ method: 'HEAD', url: '/api/v1/live' });
+  assert.equal(res.statusCode, 404);
   await app.close();
 });
