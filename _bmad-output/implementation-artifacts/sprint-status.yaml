@@ -1,0 +1,67 @@
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic not yet started
+#   - in-progress: Epic actively being worked on
+#   - done: All stories in epic completed
+
+# Story Status:
+#   - backlog: Story only exists in epic file
+#   - ready-for-dev: Story file created, ready for development
+#   - in-progress: Developer actively working on implementation
+#   - review: Implementation complete, ready for review
+#   - done: Story completed
+
+# Retrospective Status:
+#   - optional: Can be completed but not required
+#   - done: Retrospective has been completed
+
+# Action Item Status:
+#   - open: Committed during a retrospective, not yet addressed
+#   - in-progress: Actively being worked on
+#   - done: Completed
+
+# WORKFLOW NOTES:
+# ===============
+# - Epic transitions to 'in-progress' automatically when its first story starts (via build's sprint sync)
+# - Stories can be worked in parallel if team capacity allows
+# - Developer typically creates the next story after the previous one is 'done' to incorporate learnings
+# - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
+# - Retrospective appends its action items to action_items; the status view surfaces open ones
+generated: 10-15-2026 21:00
+last_updated: 10-15-2026 21:00
+project: running-live-tracker
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+development_status:
+  epic-1: backlog
+  1-1-project-scaffold-wire-contract-and-health-check: backlog
+  1-2-live-stream-spike-through-tailscale-funnel: backlog
+  1-3-runner-keys-and-authenticated-ingest: backlog
+  1-4-runner-simulator: backlog
+  1-5-live-runner-projection-and-change-events: backlog
+  1-6-live-map-web-page: backlog
+  epic-1-retrospective: optional
+
+  epic-2: backlog
+  2-1-android-app-scaffold-settings-and-wire-contract: backlog
+  2-2-foreground-tracking-service-recording-to-the-outbox: backlog
+  2-3-uploading-positions-with-acks-retries-and-offline-buffering: backlog
+  2-4-finishing-uploads-after-stop: backlog
+  epic-2-retrospective: optional
+
+  epic-3: backlog
+  3-1-distance-pace-and-elapsed-time: backlog
+  3-2-switching-runners-and-following-the-selected-runner: backlog
+  3-3-shared-gpx-course-on-the-map: backlog
+  3-4-course-progress: backlog
+  3-5-estimated-finish-time: backlog
+  epic-3-retrospective: optional
+
+  epic-4: backlog
+  4-1-backups-and-separate-test-run-race-events: backlog
+  4-2-always-on-home-pc: backlog
+  4-3-public-dry-run-and-phone-soak-test: backlog
+  4-4-two-runner-test-run-and-tuning: backlog
+  epic-4-retrospective: optional
