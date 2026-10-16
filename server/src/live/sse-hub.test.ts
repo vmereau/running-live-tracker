@@ -4,7 +4,8 @@ import { createServer } from 'node:http';
 import type { Server } from 'node:http';
 import { EventEmitter, once } from 'node:events';
 import type { ServerResponse } from 'node:http';
-import { Snapshot } from '@running-live-tracker/shared';
+import { RunnerEvent, Snapshot, TrackEvent } from '@running-live-tracker/shared';
+import type { RunnerView } from '@running-live-tracker/shared';
 import { createLiveHub } from './sse-hub.ts';
 import type { LiveHub } from './sse-hub.ts';
 
@@ -55,7 +56,7 @@ async function waitFor(cond: () => boolean, timeoutMs = 2_000) {
 }
 
 test('attach writes SSE headers, the snapshot first, then pings', async () => {
-  const hub = createLiveHub({ getSnapshot: () => snapshot, pingIntervalMs: 30 });
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 0, pingIntervalMs: 30 });
   const { server, url } = await serve(hub);
   try {
     const res = await fetch(url);
@@ -76,7 +77,7 @@ test('attach writes SSE headers, the snapshot first, then pings', async () => {
 });
 
 test('client abort clears the client and its timer', async () => {
-  const hub = createLiveHub({ getSnapshot: () => snapshot, pingIntervalMs: 20 });
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 0, pingIntervalMs: 20 });
   const { server, url } = await serve(hub);
   try {
     const controller = new AbortController();
@@ -94,7 +95,7 @@ test('client abort clears the client and its timer', async () => {
 });
 
 test('closeAll ends every open stream', async () => {
-  const hub = createLiveHub({ getSnapshot: () => snapshot, pingIntervalMs: 60_000 });
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 0, pingIntervalMs: 60_000 });
   const { server, url } = await serve(hub);
   try {
     const bodies = await Promise.all([fetch(url), fetch(url)]);
@@ -124,7 +125,7 @@ test('default ping interval is 20 s', () => {
       write: (chunk: string) => writes.push(chunk) > 0,
       end: () => fake,
     });
-    const hub = createLiveHub({ getSnapshot: () => snapshot });
+    const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 0 });
     hub.attach(fake as unknown as ServerResponse);
     const pings = () => writes.filter((w) => w === ': ping\n\n').length;
     assert.ok(writes[0]!.startsWith('event: snapshot'));
@@ -136,4 +137,121 @@ test('default ping interval is 20 s', () => {
   } finally {
     mock.timers.reset();
   }
+});
+
+// ---- Story 1.5: publish ----
+
+function fakeResponse() {
+  const writes: string[] = [];
+  const fake = Object.assign(new EventEmitter(), {
+    destroyed: false,
+    writableEnded: false,
+    writeHead: () => fake,
+    write: (chunk: string) => writes.push(chunk) > 0,
+    end: () => {
+      fake.writableEnded = true;
+      return fake;
+    },
+  });
+  return { fake, res: fake as unknown as ServerResponse, writes };
+}
+
+/** Splits written SSE text into [event, parsed data] pairs, pings dropped. */
+function frames(text: string): [string, unknown][] {
+  return text
+    .split('\n\n')
+    .filter((f) => f !== '' && !f.startsWith(':'))
+    .map((f) => {
+      const [event, data] = f.split('\n');
+      return [event!.slice('event: '.length), JSON.parse(data!.slice('data: '.length))];
+    });
+}
+
+const view: RunnerView = {
+  runnerId: 'alice',
+  status: 'active',
+  runStartedAt: 1_000,
+  runEndedAt: null,
+  lastFixAt: 2_000,
+  lastReceivedAt: 3_000,
+  lastPosition: { lat: 48.1, lon: 2.1 },
+  distanceM: 0,
+  progressM: null,
+  remainingM: null,
+  progressFraction: null,
+  offCourse: false,
+  avgPaceSPerKm: null,
+  currentPaceSPerKm: null,
+  etaAt: null,
+};
+const points = [
+  { lat: 48, lon: 2, recordedAt: 1_000 },
+  { lat: 48.1, lon: 2.1, recordedAt: 2_000 },
+];
+
+test('publish writes track then runner, both stamped with serverNow, to every client', () => {
+  let clock = 1_760_000_000_500;
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => clock++, pingIntervalMs: 60_000 });
+  const a = fakeResponse();
+  const b = fakeResponse();
+  hub.attach(a.res);
+  hub.attach(b.res);
+  hub.publish({ runnerId: 'alice', view, appendedPoints: points, trackReset: false });
+  for (const { writes } of [a, b]) {
+    const got = frames(writes.join(''));
+    assert.deepStrictEqual(got.map(([e]) => e), ['snapshot', 'track', 'runner']);
+    assert.deepStrictEqual(TrackEvent.parse(got[1]![1]), { serverNow: 1_760_000_000_500, runnerId: 'alice', points });
+    assert.deepStrictEqual(RunnerEvent.parse(got[2]![1]), { serverNow: 1_760_000_000_500, view });
+  }
+  hub.closeAll();
+});
+
+test('publish without appended points writes the runner frame only', () => {
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 7, pingIntervalMs: 60_000 });
+  const a = fakeResponse();
+  hub.attach(a.res);
+  hub.publish({ runnerId: 'alice', view, appendedPoints: [], trackReset: false });
+  assert.deepStrictEqual(frames(a.writes.join('')).slice(1), [['runner', { serverNow: 7, view }]]);
+  hub.closeAll();
+});
+
+test('publish on a track reset sends a fresh snapshot instead of track/runner', () => {
+  let calls = 0;
+  const fresh = { ...snapshot, serverNow: 99 };
+  const hub = createLiveHub({ getSnapshot: () => (calls++ === 0 ? snapshot : fresh), now: () => 7, pingIntervalMs: 60_000 });
+  const a = fakeResponse();
+  hub.attach(a.res);
+  hub.publish({ runnerId: 'alice', view, appendedPoints: points, trackReset: true });
+  assert.deepStrictEqual(frames(a.writes.join('')), [
+    ['snapshot', snapshot],
+    ['snapshot', fresh],
+  ]);
+  hub.closeAll();
+});
+
+test('publish skips dead clients and never throws', () => {
+  const hub = createLiveHub({ getSnapshot: () => snapshot, now: () => 7, pingIntervalMs: 60_000 });
+  const dead = fakeResponse();
+  const throwing = fakeResponse();
+  const alive = fakeResponse();
+  for (const c of [dead, throwing, alive]) hub.attach(c.res);
+  dead.fake.destroyed = true;
+  throwing.fake.write = () => {
+    throw new Error('EPIPE');
+  };
+  hub.publish({ runnerId: 'alice', view, appendedPoints: points, trackReset: false });
+  assert.equal(dead.writes.length, 1, 'only the snapshot');
+  assert.deepStrictEqual(frames(alive.writes.join('')).map(([e]) => e), ['snapshot', 'track', 'runner']);
+  hub.closeAll();
+});
+
+test('publish with no clients is a no-op', () => {
+  const hub = createLiveHub({
+    getSnapshot: () => {
+      throw new Error('not expected');
+    },
+    now: () => 7,
+  });
+  hub.publish({ runnerId: 'alice', view, appendedPoints: points, trackReset: true });
+  assert.equal(hub.clientCount(), 0);
 });

@@ -1,9 +1,11 @@
 // Ingest protocol (AD-3, AD-5, AD-12): authenticate a runner key, validate one
 // batch, check session ownership, store it in one transaction and build the ack.
 // The only writer of the fix log. Runner identity comes from the key alone.
+// After every committed batch it notifies the projection (never `live`).
 import { IngestBatch, MAX_BATCH_RECORDS } from '@running-live-tracker/shared';
 import type { IngestAck } from '@running-live-tracker/shared';
 import type { KeyLookup } from '../config/key-lookup.ts';
+import type { Projection } from '../projection/create-projection.ts';
 import { SessionOwnerMismatchError } from '../store/open-store.ts';
 import type { Store } from '../store/open-store.ts';
 
@@ -33,6 +35,8 @@ export type Ingest = {
 export type CreateIngestOptions = {
   store: Store;
   findRunner: KeyLookup;
+  /** Told about every committed batch, duplicates included; a throw surfaces as a 500 and the phone retries. */
+  projection: Pick<Projection, 'recordsCommitted'>;
   /** Server clock, epoch ms. */
   now: () => number;
 };
@@ -43,7 +47,7 @@ function reject(status: IngestRejection['status'], code: IngestErrorCode, messag
   return { ok: false, status, code, message };
 }
 
-export function createIngest({ store, findRunner, now }: CreateIngestOptions): Ingest {
+export function createIngest({ store, findRunner, projection, now }: CreateIngestOptions): Ingest {
   return {
     authenticate(authorizationHeader) {
       if (typeof authorizationHeader !== 'string') return undefined;
@@ -74,8 +78,9 @@ export function createIngest({ store, findRunner, now }: CreateIngestOptions): I
 
       const receivedAt = now();
       let inserted: number;
+      let firstInsertedSeq: number | null;
       try {
-        ({ inserted } = store.appendBatch({
+        ({ inserted, firstInsertedSeq } = store.appendBatch({
           runnerId,
           sessionId: batch.sessionId,
           sessionStartedAt: batch.sessionStartedAt,
@@ -88,6 +93,8 @@ export function createIngest({ store, findRunner, now }: CreateIngestOptions): I
         }
         throw err;
       }
+      // Committed: the projection folds whatever lies after its last key, even when nothing was new.
+      projection.recordsCommitted({ runnerId, sessionId: batch.sessionId, firstInsertedSeq });
 
       // The schema guarantees at least one record, in increasing seq order.
       const last = batch.records[batch.records.length - 1]!;

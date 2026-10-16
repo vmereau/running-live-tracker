@@ -19,7 +19,7 @@ test('appendBatch stores the session once and records with NULL for absent field
   const store = openStore(':memory:');
   try {
     assert.equal(store.sessionOwner(sessionId), undefined);
-    assert.deepStrictEqual(store.appendBatch(batch), { inserted: 3 });
+    assert.deepStrictEqual(store.appendBatch(batch), { inserted: 3, firstInsertedSeq: 0 });
     assert.equal(store.sessionOwner(sessionId), 'alice');
     assert.deepStrictEqual(store.readSession(sessionId), {
       sessionId,
@@ -50,12 +50,12 @@ test('appendBatch ignores repeated seqs and never updates the session row', () =
   const store = openStore(':memory:');
   try {
     store.appendBatch(batch);
-    assert.deepStrictEqual(store.appendBatch({ ...batch, receivedAt: 9000, sessionStartedAt: 1 }), { inserted: 0 });
+    assert.deepStrictEqual(store.appendBatch({ ...batch, receivedAt: 9000, sessionStartedAt: 1 }), { inserted: 0, firstInsertedSeq: null });
     const overlap: IngestRecord[] = [
       { seq: 3, kind: 'end', recordedAt: 7777 },
       { seq: 4, kind: 'fix', recordedAt: 4000, lat: 1, lon: 2, accuracyM: 3 },
     ];
-    assert.deepStrictEqual(store.appendBatch({ ...batch, receivedAt: 9000, records: overlap }), { inserted: 1 });
+    assert.deepStrictEqual(store.appendBatch({ ...batch, receivedAt: 9000, records: overlap }), { inserted: 1, firstInsertedSeq: 4 });
     assert.equal(store.readSession(sessionId)?.firstReceivedAt, 5000);
     assert.equal(store.readSession(sessionId)?.sessionStartedAt, 900);
     const rows = store.readRecords(sessionId);
@@ -112,8 +112,54 @@ test('a file store uses WAL and keeps its rows across close and reopen', () => {
     assert.equal(second.sessionOwner(sessionId), 'alice');
     assert.equal(second.readSession(sessionId)?.firstReceivedAt, 5000);
     assert.equal(second.readRecords(sessionId).length, 3);
-    assert.deepStrictEqual(second.appendBatch(batch), { inserted: 0 });
+    assert.deepStrictEqual(second.appendBatch(batch), { inserted: 0, firstInsertedSeq: null });
   } finally {
     second.close();
+  }
+});
+
+test('readRunRecords joins the stored sessionStartedAt, filters runner and window, orders canonically', () => {
+  const store = openStore(':memory:');
+  try {
+    const fix = (seq: number): IngestRecord => ({ seq, kind: 'fix', recordedAt: 10_000 + seq, lat: 1, lon: 2, accuracyM: 3 });
+    const sA = '00000000-0000-4000-8000-00000000000a';
+    const sB = '00000000-0000-4000-8000-00000000000b';
+    const sC = '00000000-0000-4000-8000-00000000000c';
+    // sB starts first; sA and sC share a start, so sessionId breaks the tie.
+    store.appendBatch({ runnerId: 'alice', sessionId: sA, sessionStartedAt: 200, receivedAt: 1, records: [fix(2), fix(5)] });
+    store.appendBatch({ runnerId: 'alice', sessionId: sC, sessionStartedAt: 200, receivedAt: 1, records: [fix(0)] });
+    store.appendBatch({ runnerId: 'alice', sessionId: sB, sessionStartedAt: 100, receivedAt: 1, records: [fix(7)] });
+    // A later batch claiming another start does not move the session: the first written start is canonical.
+    store.appendBatch({ runnerId: 'alice', sessionId: sA, sessionStartedAt: 50, receivedAt: 1, records: [fix(3)] });
+    // Other runner, and sessions outside the window.
+    store.appendBatch({ runnerId: 'bob', sessionId, sessionStartedAt: 150, receivedAt: 1, records: [fix(0)] });
+    store.appendBatch({ runnerId: 'alice', sessionId: '00000000-0000-4000-8000-0000000000d0', sessionStartedAt: 99, receivedAt: 1, records: [fix(0)] });
+    store.appendBatch({ runnerId: 'alice', sessionId: '00000000-0000-4000-8000-0000000000e0', sessionStartedAt: 201, receivedAt: 1, records: [fix(0)] });
+
+    const keys = (rows: { sessionStartedAt: number; sessionId: string; seq: number }[]) =>
+      rows.map((r) => [r.sessionStartedAt, r.sessionId, r.seq]);
+    const all = store.readRunRecords('alice', 100, 200);
+    assert.deepStrictEqual(keys(all), [
+      [100, sB, 7],
+      [200, sA, 2],
+      [200, sA, 3],
+      [200, sA, 5],
+      [200, sC, 0],
+    ]);
+    assert.deepStrictEqual(all[0], {
+      sessionStartedAt: 100, sessionId: sB, seq: 7, kind: 'fix', recordedAt: 10_007, receivedAt: 1,
+      lat: 1, lon: 2, accuracyM: 3, altitudeM: null, speedMps: null,
+    });
+    assert.deepStrictEqual(keys(store.readRunRecords('alice', 100, 200, { sessionStartedAt: 200, sessionId: sA, seq: 2 })), [
+      [200, sA, 3],
+      [200, sA, 5],
+      [200, sC, 0],
+    ]);
+    assert.deepStrictEqual(keys(store.readRunRecords('alice', 100, 200, { sessionStartedAt: 200, sessionId: sC, seq: 0 })), []);
+    assert.deepStrictEqual(keys(store.readRunRecords('alice', 100, 200, { sessionStartedAt: 0, sessionId: '', seq: 0 })), keys(all));
+    assert.deepStrictEqual(keys(store.readRunRecords('bob', 100, 200)), [[150, sessionId, 0]]);
+    assert.deepStrictEqual(store.readRunRecords('carol', 0, 1_000), []);
+  } finally {
+    store.close();
   }
 });

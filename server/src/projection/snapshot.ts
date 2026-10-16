@@ -1,6 +1,5 @@
-// Read-side snapshot (AD-6, AD-9). Story 1.2: every runner notStarted with an
-// empty track. Story 1.5 replaces the empty views with the folded projection.
-import type { EventInfo, RunnerView, Snapshot } from '@running-live-tracker/shared';
+// Read-side snapshot (AD-6, AD-9), built from the projected runner views and tracks.
+import type { EventInfo, RunnerView, Snapshot, TrackPoint } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
 
 /** Public event info, built field by field so config-only fields (keyHash, coursePath) never leak. */
@@ -15,7 +14,8 @@ export function buildEventInfo(config: EventConfig): EventInfo {
   };
 }
 
-function notStartedView(runnerId: string): RunnerView {
+/** The view of a runner before any accepted record. Epic 3 fields keep these contract defaults. */
+export function initialRunnerView(runnerId: string): RunnerView {
   return {
     runnerId,
     status: 'notStarted',
@@ -35,13 +35,19 @@ function notStartedView(runnerId: string): RunnerView {
   };
 }
 
-/** The single snapshot builder behind GET /api/v1/snapshot and the SSE `snapshot` event. */
-export function buildSnapshot(config: EventConfig, now: number): Snapshot {
+/** One runner's projected state as the snapshot needs it. */
+export type ProjectedRunner = { view: RunnerView; track: readonly TrackPoint[] };
+
+/**
+ * The single snapshot builder behind GET /api/v1/snapshot and the SSE `snapshot` event.
+ * Runners come in config order; a configured runner missing from `projected` is notStarted with an empty track.
+ */
+export function buildSnapshot(config: EventConfig, now: number, projected: ReadonlyMap<string, ProjectedRunner>): Snapshot {
   const runnerIds = config.runners.map((r) => r.runnerId);
   return {
     serverNow: now,
     event: buildEventInfo(config),
-    runners: runnerIds.map(notStartedView),
-    tracks: Object.fromEntries(runnerIds.map((id) => [id, []])),
+    runners: runnerIds.map((id) => projected.get(id)?.view ?? initialRunnerView(id)),
+    tracks: Object.fromEntries(runnerIds.map((id) => [id, [...(projected.get(id)?.track ?? [])]])),
   };
 }

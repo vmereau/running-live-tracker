@@ -58,18 +58,36 @@ export type StoredRecord = {
   speedMps: number | null;
 };
 
+/** Canonical fold position of a record (AD-4): ordered by sessionStartedAt, then sessionId, then seq. */
+export type RunKey = { sessionStartedAt: number; sessionId: string; seq: number };
+
+/** A records row joined with its session's stored (first written) sessionStartedAt. */
+export type StoredRunRecord = StoredRecord & { sessionStartedAt: number };
+
+export type AppendBatchResult = {
+  /** How many records were new. */
+  inserted: number;
+  /** Lowest seq that was new in this batch, or null when every record was already stored. */
+  firstInsertedSeq: number | null;
+};
+
 export type Store = {
   /** runnerId owning the session, or undefined if the session is not stored yet. */
   sessionOwner(sessionId: string): string | undefined;
   /**
    * One transaction: inserts the session row if new, then every record, skipping (sessionId, seq) already stored.
    * Throws SessionOwnerMismatchError (and stores nothing) if the session belongs to another runner.
-   * Returns how many records were new.
+   * Returns how many records were new and the lowest new seq.
    */
-  appendBatch(input: AppendBatchInput): { inserted: number };
+  appendBatch(input: AppendBatchInput): AppendBatchResult;
   readSession(sessionId: string): StoredSession | undefined;
   /** Records of one session in seq order. */
   readRecords(sessionId: string): StoredRecord[];
+  /**
+   * Records of one runner's sessions whose stored sessionStartedAt is in [opensAt, closesAt] (inclusive),
+   * in canonical order (sessionStartedAt, sessionId, seq), optionally only those strictly after `after`.
+   */
+  readRunRecords(runnerId: string, opensAt: number, closesAt: number, after?: RunKey): StoredRunRecord[];
   close(): void;
 };
 
@@ -98,9 +116,19 @@ export function openStore(path: string): Store {
   const selectSession = db.prepare<[string], StoredSession>('SELECT * FROM sessions WHERE sessionId = ?');
   const selectRecords = db.prepare<[string], StoredRecord>('SELECT * FROM records WHERE sessionId = ? ORDER BY seq');
 
+  const RUN_RECORDS = `SELECT s.sessionStartedAt AS sessionStartedAt, r.*
+     FROM records r JOIN sessions s ON s.sessionId = r.sessionId
+     WHERE s.runnerId = @runnerId AND s.sessionStartedAt BETWEEN @opensAt AND @closesAt`;
+  const RUN_ORDER = 'ORDER BY s.sessionStartedAt, r.sessionId, r.seq';
+  type RunParams = { runnerId: string; opensAt: number; closesAt: number };
+  const selectRunRecords = db.prepare<[RunParams], StoredRunRecord>(`${RUN_RECORDS} ${RUN_ORDER}`);
+  const selectRunRecordsAfter = db.prepare<[RunParams & RunKey], StoredRunRecord>(
+    `${RUN_RECORDS} AND (s.sessionStartedAt, r.sessionId, r.seq) > (@sessionStartedAt, @sessionId, @seq) ${RUN_ORDER}`,
+  );
+
   const sessionOwner = (sessionId: string): string | undefined => selectOwner.get(sessionId)?.runnerId;
 
-  const appendBatch = db.transaction((input: AppendBatchInput): { inserted: number } => {
+  const appendBatch = db.transaction((input: AppendBatchInput): AppendBatchResult => {
     const { runnerId, sessionId, sessionStartedAt, receivedAt } = input;
     insertSession.run({ sessionId, runnerId, sessionStartedAt, firstReceivedAt: receivedAt });
     if (sessionOwner(sessionId) !== runnerId) {
@@ -108,6 +136,7 @@ export function openStore(path: string): Store {
       throw new SessionOwnerMismatchError(`session ${sessionId} belongs to another runner`);
     }
     let inserted = 0;
+    let firstInsertedSeq: number | null = null;
     for (const r of input.records) {
       const fix = r.kind === 'fix' ? r : undefined;
       const result = insertRecord.run({
@@ -123,8 +152,9 @@ export function openStore(path: string): Store {
         speedMps: fix?.speedMps ?? null,
       });
       inserted += result.changes;
+      if (result.changes > 0 && (firstInsertedSeq === null || r.seq < firstInsertedSeq)) firstInsertedSeq = r.seq;
     }
-    return { inserted };
+    return { inserted, firstInsertedSeq };
   });
 
   return {
@@ -132,6 +162,17 @@ export function openStore(path: string): Store {
     appendBatch: (input) => appendBatch(input),
     readSession: (sessionId) => selectSession.get(sessionId),
     readRecords: (sessionId) => selectRecords.all(sessionId),
+    readRunRecords: (runnerId, opensAt, closesAt, after) =>
+      after === undefined
+        ? selectRunRecords.all({ runnerId, opensAt, closesAt })
+        : selectRunRecordsAfter.all({
+            runnerId,
+            opensAt,
+            closesAt,
+            sessionStartedAt: after.sessionStartedAt,
+            sessionId: after.sessionId,
+            seq: after.seq,
+          }),
     close: () => db.close(),
   };
 }

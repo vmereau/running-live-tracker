@@ -8,6 +8,9 @@ import type { FastifyInstance } from 'fastify';
 import { ErrorBody, Snapshot } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
 import type { Ingest } from '../ingest/ingest.ts';
+import type { ChangeListener, Projection } from '../projection/create-projection.ts';
+import { buildSnapshot, initialRunnerView } from '../projection/snapshot.ts';
+import type { ProjectedRunner } from '../projection/snapshot.ts';
 import { buildApp } from './build-app.ts';
 
 const config: EventConfig = {
@@ -18,6 +21,20 @@ const config: EventConfig = {
   runners: [{ runnerId: 'alice', displayName: 'Alice', color: '#e6194b', keyHash: 'a'.repeat(64) }],
 };
 
+// http may not import store, so the projection is a stub: snapshots come from `projected`,
+// and `emit` plays the projection's change events.
+function stubProjection(projected = new Map<string, ProjectedRunner>()) {
+  let listener: ChangeListener | undefined;
+  const projection: Pick<Projection, 'snapshot' | 'onChange'> = {
+    snapshot: (now) => buildSnapshot(config, now, projected),
+    onChange: (l) => {
+      assert.equal(listener, undefined, 'one listener only');
+      listener = l;
+    },
+  };
+  return { projection, projected, emit: (...args: Parameters<ChangeListener>) => listener!(...args) };
+}
+
 // Story 1.3 tests below replace this with stubs that record their calls.
 const noIngest: Ingest = {
   authenticate: () => undefined,
@@ -26,7 +43,7 @@ const noIngest: Ingest = {
   },
 };
 
-const makeApp = () => buildApp({ config, ingest: noIngest, now: () => 1_760_000_000_123 });
+const makeApp = () => buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 1_760_000_000_123 });
 
 test('GET /api/v1/health returns ok, serverNow and eventId', async () => {
   const app = makeApp();
@@ -149,7 +166,7 @@ async function readUntil(body: ReadableStream<Uint8Array>, predicate: (text: str
 }
 
 test('GET /api/v1/live streams SSE headers, a snapshot first, then pings', async () => {
-  const app = buildApp({ config, ingest: noIngest, now: () => 1_760_000_000_123, pingIntervalMs: 40 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 1_760_000_000_123, pingIntervalMs: 40 });
   const base = await listen(app);
   try {
     const res = await fetch(`${base}/api/v1/live`, { headers: { 'accept-encoding': 'gzip, br' } });
@@ -176,7 +193,7 @@ test('GET /api/v1/live streams SSE headers, a snapshot first, then pings', async
 });
 
 test('app.close() ends open live streams and resolves', async () => {
-  const app = buildApp({ config, ingest: noIngest, now: () => 0, pingIntervalMs: 60_000 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 0, pingIntervalMs: 60_000 });
   const base = await listen(app);
   const streams = await Promise.all([fetch(`${base}/api/v1/live`), fetch(`${base}/api/v1/live`)]);
   const readers = [];
@@ -204,7 +221,7 @@ test('app.close() ends open live streams and resolves', async () => {
 });
 
 test('client abort does not break the server', async () => {
-  const app = buildApp({ config, ingest: noIngest, now: () => 0, pingIntervalMs: 20 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 0, pingIntervalMs: 20 });
   const base = await listen(app);
   try {
     const controller = new AbortController();
@@ -222,7 +239,7 @@ test('client abort does not break the server', async () => {
 test('webRoot directory is served at /, /api misses stay JSON 404', async () => {
   const webRoot = mkdtempSync(join(tmpdir(), 'rlt-web-'));
   writeFileSync(join(webRoot, 'index.html'), '<!doctype html><title>diag</title>');
-  const app = buildApp({ config, ingest: noIngest, now: () => 0, webRoot });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 0, webRoot });
   try {
     const index = await app.inject({ method: 'GET', url: '/' });
     assert.equal(index.statusCode, 200);
@@ -242,7 +259,7 @@ test('missing webRoot logs a warning and serves no web app', async () => {
   const webRoot = join(tmpdir(), 'rlt-web-does-not-exist');
   const logs: string[] = [];
   const stream = { write: (line: string) => void logs.push(line) };
-  const app = buildApp({ config, ingest: noIngest, now: () => 0, webRoot, logger: { level: 'warn', stream } });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest: noIngest, now: () => 0, webRoot, logger: { level: 'warn', stream } });
   try {
     const res = await app.inject({ method: 'GET', url: '/' });
     assert.equal(res.statusCode, 404);
@@ -306,7 +323,7 @@ const HUGE = JSON.stringify({ padding: 'x'.repeat(2_000_000) });
 
 test('POST /api/v1/ingest returns the ack and passes the key runner and parsed body', async () => {
   const { ingest, calls } = stubIngest(ACCEPTED);
-  const app = buildApp({ config, ingest, now: () => 0 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
   try {
     const res = await postIngest(app, JSON.stringify(BATCH));
     assert.equal(res.statusCode, 200);
@@ -325,7 +342,7 @@ const badAuth: [string, Record<string, string>][] = [
 for (const [name, headers] of badAuth) {
   test(`POST /api/v1/ingest with ${name} key is 401 UNAUTHORIZED, whatever the body`, async () => {
     const { ingest, calls } = stubIngest(ACCEPTED);
-    const app = buildApp({ config, ingest, now: () => 0 });
+    const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
     try {
       for (const payload of [JSON.stringify(BATCH), '{bad json', HUGE]) {
         const res = await postIngest(app, payload, headers);
@@ -341,7 +358,7 @@ for (const [name, headers] of badAuth) {
 
 test('POST /api/v1/ingest without any Authorization header is 401', async () => {
   const { ingest, calls } = stubIngest(ACCEPTED);
-  const app = buildApp({ config, ingest, now: () => 0 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
   try {
     const res = await app.inject({
       method: 'POST',
@@ -366,7 +383,7 @@ const rejections: [400 | 409 | 413, 'INVALID_BATCH' | 'SESSION_OWNER_MISMATCH' |
 for (const [status, code] of rejections) {
   test(`POST /api/v1/ingest maps an ingest ${status} to ${code}`, async () => {
     const { ingest } = stubIngest({ ok: false, status, code, message: 'nope' });
-    const app = buildApp({ config, ingest, now: () => 0 });
+    const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
     try {
       const res = await postIngest(app, JSON.stringify(BATCH));
       assert.equal(res.statusCode, status);
@@ -386,7 +403,7 @@ const unparseable: [string, string, Record<string, string>, number, string][] = 
 for (const [name, payload, headers, status, code] of unparseable) {
   test(`POST /api/v1/ingest with ${name} is ${status} ${code} and never reaches ingest`, async () => {
     const { ingest, calls } = stubIngest(ACCEPTED);
-    const app = buildApp({ config, ingest, now: () => 0 });
+    const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
     try {
       const res = await postIngest(app, payload, headers);
       assert.equal(res.statusCode, status);
@@ -406,7 +423,7 @@ test('an unexpected ingest failure is 500 INTERNAL_ERROR', async () => {
       throw new Error('disk on fire');
     },
   };
-  const app = buildApp({ config, ingest, now: () => 0 });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0 });
   try {
     const res = await postIngest(app, JSON.stringify(BATCH));
     assert.equal(res.statusCode, 500);
@@ -420,7 +437,7 @@ test('ingest logs one batch line with clockSkewMs and never the key, header or b
   const logs: string[] = [];
   const stream = { write: (line: string) => void logs.push(line) };
   const { ingest } = stubIngest(ACCEPTED);
-  const app = buildApp({ config, ingest, now: () => 0, logger: { level: 'trace', stream } });
+  const app = buildApp({ config, projection: stubProjection().projection, ingest, now: () => 0, logger: { level: 'trace', stream } });
   try {
     assert.equal((await postIngest(app, JSON.stringify(BATCH))).statusCode, 200);
     assert.equal((await postIngest(app, JSON.stringify(BATCH), { authorization: 'Bearer wrong-key-123' })).statusCode, 401);
@@ -441,6 +458,60 @@ test('ingest logs one batch line with clockSkewMs and never the key, header or b
       lines.filter((l) => l['msg'] === 'ingest rejected').map((l) => l['code']),
       ['UNAUTHORIZED', 'INVALID_BATCH'],
     );
+  } finally {
+    await app.close();
+  }
+});
+
+// ---- Story 1.5: projected snapshot and live changes ----
+
+const activeView = {
+  ...initialRunnerView('alice'),
+  status: 'active' as const,
+  runStartedAt: 1_000,
+  lastFixAt: 2_000,
+  lastReceivedAt: 2_500,
+  lastPosition: { lat: 48.1, lon: 2.1 },
+};
+const twoPoints = [
+  { lat: 48, lon: 2, recordedAt: 1_000 },
+  { lat: 48.1, lon: 2.1, recordedAt: 2_000 },
+];
+
+test('GET /api/v1/snapshot serves the projected state', async () => {
+  const stub = stubProjection(new Map([['alice', { view: activeView, track: twoPoints }]]));
+  const app = buildApp({ config, projection: stub.projection, ingest: noIngest, now: () => 42 });
+  try {
+    const snap = Snapshot.parse((await app.inject({ method: 'GET', url: '/api/v1/snapshot' })).json());
+    assert.equal(snap.serverNow, 42);
+    assert.deepStrictEqual(snap.runners, [activeView]);
+    assert.deepStrictEqual(snap.tracks, { alice: twoPoints });
+  } finally {
+    await app.close();
+  }
+});
+
+test('projection changes reach open /api/v1/live streams as track then runner', async () => {
+  const stub = stubProjection();
+  const app = buildApp({ config, projection: stub.projection, ingest: noIngest, now: () => 1_760_000_000_777, pingIntervalMs: 60_000 });
+  const base = await listen(app);
+  try {
+    const res = await fetch(`${base}/api/v1/live`);
+    const first = await readUntil(res.body!, (t) => t.includes('\n\n'));
+    first.reader.releaseLock();
+    stub.emit({ runnerId: 'alice', view: activeView, appendedPoints: twoPoints, trackReset: false });
+    const rest = await readUntil(res.body!, (t) => t.includes('event: runner') && t.endsWith('\n\n'));
+    const reader = rest.reader;
+    const text = first.text + rest.text;
+    const frames = text.split('\n\n').filter((f) => f !== '');
+    assert.deepStrictEqual(
+      frames.map((f) => f.split('\n')[0]),
+      ['event: snapshot', 'event: track', 'event: runner'],
+    );
+    const data = (f: string) => JSON.parse(f.split('\n')[1]!.slice('data: '.length)) as unknown;
+    assert.deepStrictEqual(data(frames[1]!), { serverNow: 1_760_000_000_777, runnerId: 'alice', points: twoPoints });
+    assert.deepStrictEqual(data(frames[2]!), { serverNow: 1_760_000_000_777, view: activeView });
+    await reader.cancel();
   } finally {
     await app.close();
   }

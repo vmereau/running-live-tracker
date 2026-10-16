@@ -6,6 +6,8 @@ import { ConfigError, loadConfig } from './config/load-config.ts';
 import type { EventConfig } from './config/load-config.ts';
 import { buildApp } from './http/build-app.ts';
 import { createIngest } from './ingest/ingest.ts';
+import { createProjection } from './projection/create-projection.ts';
+import type { Projection } from './projection/create-projection.ts';
 import { openStore } from './store/open-store.ts';
 import type { Store } from './store/open-store.ts';
 
@@ -42,10 +44,19 @@ try {
   console.error(`Cannot open the data store at ${dbPath}: ${(err as Error).message}`);
   process.exit(1);
 }
-const ingest = createIngest({ store, findRunner: createKeyLookup(config), now: Date.now });
+let projection: Projection;
+try {
+  // Boot replay of the fix log into the in-memory projection.
+  projection = createProjection({ config, store });
+} catch (err) {
+  console.error(`Cannot replay the data store at ${dbPath}: ${(err as Error).message}`);
+  store.close();
+  process.exit(1);
+}
+const ingest = createIngest({ store, findRunner: createKeyLookup(config), projection, now: Date.now });
 
 // JSON logs to stdout; writing them under data/logs is Story 4.2.
-const app = buildApp({ config, ingest, now: Date.now, logger: true, webRoot });
+const app = buildApp({ config, ingest, projection, now: Date.now, logger: true, webRoot });
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {

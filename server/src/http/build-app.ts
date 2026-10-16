@@ -7,7 +7,7 @@ import type { ErrorBody } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
 import type { Ingest } from '../ingest/ingest.ts';
 import { createLiveHub } from '../live/sse-hub.ts';
-import { buildSnapshot } from '../projection/snapshot.ts';
+import type { Projection } from '../projection/create-projection.ts';
 
 export type HealthResponse = { ok: true; serverNow: number; eventId: string };
 
@@ -15,6 +15,8 @@ export type BuildAppOptions = {
   config: EventConfig;
   /** Ingest service (built by main.ts around the store, since http may not import store). */
   ingest: Ingest;
+  /** Live projection (built by main.ts around the store): serves snapshots and emits runner changes. */
+  projection: Pick<Projection, 'snapshot' | 'onChange'>;
   /** Server clock, epoch ms. Injected so tests are deterministic. */
   now: () => number;
   logger?: FastifyServerOptions['logger'];
@@ -48,10 +50,11 @@ function statusOf(error: unknown): number {
   return typeof status === 'number' ? status : 500;
 }
 
-export function buildApp({ config, ingest, now, logger = false, pingIntervalMs, webRoot }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, ingest, projection, now, logger = false, pingIntervalMs, webRoot }: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger });
-  const getSnapshot = () => buildSnapshot(config, now());
-  const hub = createLiveHub({ getSnapshot, pingIntervalMs });
+  const getSnapshot = () => projection.snapshot(now());
+  const hub = createLiveHub({ getSnapshot, now, pingIntervalMs });
+  projection.onChange(hub.publish);
   // Hijacked SSE responses are invisible to Fastify; end them or close() would wait forever.
   app.addHook('preClose', async () => hub.closeAll());
 

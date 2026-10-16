@@ -8,6 +8,7 @@ import { IngestAck, MAX_BATCH_RECORDS } from '@running-live-tracker/shared';
 import type { IngestBatch } from '@running-live-tracker/shared';
 import { createKeyLookup } from '../config/key-lookup.ts';
 import type { EventConfig } from '../config/load-config.ts';
+import type { RecordsCommitted } from '../projection/create-projection.ts';
 import { openStore } from '../store/open-store.ts';
 import type { Store } from '../store/open-store.ts';
 import { createIngest } from './ingest.ts';
@@ -34,12 +35,26 @@ const config: EventConfig = {
 
 const NOW = 1_760_000_060_000;
 
-function setup(): { store: Store; ingest: ReturnType<typeof createIngest>; tick: () => void } {
+/** Records every recordsCommitted call, with how many rows the store held for that session at that moment. */
+function spyProjection(store: () => Store) {
+  const calls: (RecordsCommitted & { storedRows: number })[] = [];
+  return {
+    calls,
+    projection: {
+      recordsCommitted: (c: RecordsCommitted) => void calls.push({ ...c, storedRows: store().readRecords(c.sessionId).length }),
+    },
+  };
+}
+
+function setup() {
   const store = openStore(':memory:');
   let now = NOW;
-  const ingest = createIngest({ store, findRunner: createKeyLookup(config), now: () => now });
-  return { store, ingest, tick: () => (now += 1_000) };
+  const spy = spyProjection(() => store);
+  const ingest = createIngest({ store, findRunner: createKeyLookup(config), projection: spy.projection, now: () => now });
+  return { store, ingest, tick: () => (now += 1_000), committed: spy.calls };
 }
+
+const noProjection = { recordsCommitted: () => {} };
 
 function accepted(result: IngestResult): IngestAccepted {
   assert.ok(result.ok, `expected acceptance, got ${JSON.stringify(result)}`);
@@ -250,16 +265,66 @@ test('restart: a reopened file store keeps the rows and the session owner', () =
   const findRunner = createKeyLookup(config);
 
   const store1 = openStore(path);
-  accepted(createIngest({ store: store1, findRunner, now: () => NOW }).ingestBatch('alice', mixed()));
+  accepted(createIngest({ store: store1, findRunner, projection: noProjection, now: () => NOW }).ingestBatch('alice', mixed()));
   store1.close();
 
   const store2 = openStore(path);
   try {
-    const ingest = createIngest({ store: store2, findRunner, now: () => NOW + 5 });
+    const ingest = createIngest({ store: store2, findRunner, projection: noProjection, now: () => NOW + 5 });
     assert.equal(rowCount(store2, mixed().sessionId), 3);
     assert.equal(accepted(ingest.ingestBatch('alice', mixed())).inserted, 0);
     rejected(ingest.ingestBatch('bob', mixed()), 409, 'SESSION_OWNER_MISMATCH');
   } finally {
     store2.close();
+  }
+});
+
+// ---- Story 1.5: projection notification ----
+
+test('every accepted batch notifies the projection after commit, duplicates included', () => {
+  const { ingest, store, committed } = setup();
+  try {
+    accepted(ingest.ingestBatch('alice', mixed()));
+    accepted(ingest.ingestBatch('alice', mixed()));
+    const next = { ...mixed(), records: [{ seq: 1, kind: 'fix', recordedAt: 1, lat: 1, lon: 1, accuracyM: 1 }, { seq: 4, kind: 'end', recordedAt: 2 }] };
+    accepted(ingest.ingestBatch('alice', next));
+    const sessionId = mixed().sessionId;
+    assert.deepStrictEqual(committed, [
+      { runnerId: 'alice', sessionId, firstInsertedSeq: 0, storedRows: 3 },
+      { runnerId: 'alice', sessionId, firstInsertedSeq: null, storedRows: 3 },
+      { runnerId: 'alice', sessionId, firstInsertedSeq: 4, storedRows: 4 },
+    ]);
+  } finally {
+    store.close();
+  }
+});
+
+test('rejected batches (400, 409, 413) never notify the projection', () => {
+  const { ingest, store, committed } = setup();
+  try {
+    rejected(ingest.ingestBatch('alice', null), 400, 'INVALID_BATCH');
+    rejected(ingest.ingestBatch('alice', { ...mixed(), records: recordsOf(MAX_BATCH_RECORDS + 1) }), 413, 'BATCH_TOO_LARGE');
+    accepted(ingest.ingestBatch('alice', { ...mixed(), records: mixed().records.slice(0, 1) }));
+    committed.length = 0;
+    rejected(ingest.ingestBatch('bob', mixed()), 409, 'SESSION_OWNER_MISMATCH');
+    assert.deepStrictEqual(committed, []);
+  } finally {
+    store.close();
+  }
+});
+
+test('a projection failure surfaces as a throw after the batch is stored', () => {
+  const store = openStore(':memory:');
+  try {
+    const projection = {
+      recordsCommitted: () => {
+        throw new Error('projection broke');
+      },
+    };
+    const ingest = createIngest({ store, findRunner: createKeyLookup(config), projection, now: () => NOW });
+    assert.throws(() => ingest.ingestBatch('alice', mixed()), /projection broke/);
+    assert.equal(rowCount(store, mixed().sessionId), 3, 'the commit is kept; the phone resends and the projection heals');
+  } finally {
+    store.close();
   }
 });
