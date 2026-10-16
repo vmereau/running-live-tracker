@@ -2,9 +2,10 @@
 import { statSync } from 'node:fs';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
-import type { FastifyInstance, FastifyServerOptions } from 'fastify';
+import type { FastifyInstance, FastifyRequest, FastifyServerOptions } from 'fastify';
 import type { ErrorBody } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import type { Ingest } from '../ingest/ingest.ts';
 import { createLiveHub } from '../live/sse-hub.ts';
 import { buildSnapshot } from '../projection/snapshot.ts';
 
@@ -12,6 +13,8 @@ export type HealthResponse = { ok: true; serverNow: number; eventId: string };
 
 export type BuildAppOptions = {
   config: EventConfig;
+  /** Ingest service (built by main.ts around the store, since http may not import store). */
+  ingest: Ingest;
   /** Server clock, epoch ms. Injected so tests are deterministic. */
   now: () => number;
   logger?: FastifyServerOptions['logger'];
@@ -45,7 +48,7 @@ function statusOf(error: unknown): number {
   return typeof status === 'number' ? status : 500;
 }
 
-export function buildApp({ config, now, logger = false, pingIntervalMs, webRoot }: BuildAppOptions): FastifyInstance {
+export function buildApp({ config, ingest, now, logger = false, pingIntervalMs, webRoot }: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger });
   const getSnapshot = () => buildSnapshot(config, now());
   const hub = createLiveHub({ getSnapshot, pingIntervalMs });
@@ -66,6 +69,49 @@ export function buildApp({ config, now, logger = false, pingIntervalMs, webRoot 
     reply.hijack();
     hub.attach(reply.raw);
   });
+
+  // AD-3/AD-5: auth runs in onRequest, before the body is read, so a request without a
+  // valid key always gets 401 and its body is never parsed. Logs never carry the key,
+  // the Authorization header or the body.
+  const ingestRunner = new WeakMap<FastifyRequest, string>();
+  app.post(
+    '/api/v1/ingest',
+    {
+      onRequest: async (request, reply) => {
+        const runnerId = ingest.authenticate(request.headers.authorization);
+        if (runnerId === undefined) {
+          request.log.warn({ code: 'UNAUTHORIZED' }, 'ingest rejected');
+          return reply.code(401).send(errorBody('UNAUTHORIZED', 'Missing or invalid runner key'));
+        }
+        ingestRunner.set(request, runnerId);
+      },
+      // Body parsing failures (malformed JSON, wrong content type, over the byte limit)
+      // use the ingest error codes instead of the generic ones.
+      errorHandler: async (error, request, reply) => {
+        const status = statusOf(error);
+        if (status >= 500 || status < 400) throw error;
+        // Fixed messages: parser errors (e.g. V8's SyntaxError) quote parts of the body.
+        const [code, httpStatus, message] =
+          status === 413 ? ['BATCH_TOO_LARGE', 413, 'Body too large'] : ['INVALID_BATCH', 400, 'Body is not valid JSON'];
+        request.log.warn({ runnerId: ingestRunner.get(request), code }, 'ingest rejected');
+        return reply.code(httpStatus).send(errorBody(code, message));
+      },
+    },
+    async (request, reply) => {
+      const runnerId = ingestRunner.get(request)!;
+      const result = ingest.ingestBatch(runnerId, request.body);
+      if (!result.ok) {
+        request.log.warn({ runnerId, code: result.code }, 'ingest rejected');
+        return reply.code(result.status).send(errorBody(result.code, result.message));
+      }
+      const { ack, recordCount, inserted, clockSkewMs } = result;
+      request.log.info(
+        { runnerId, sessionId: ack.sessionId, recordCount, inserted, ackedThroughSeq: ack.ackedThroughSeq, clockSkewMs },
+        'ingest batch accepted',
+      );
+      return ack;
+    },
+  );
 
   if (webRoot !== undefined) {
     if (isDirectory(webRoot)) {

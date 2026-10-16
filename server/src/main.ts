@@ -1,8 +1,13 @@
 // Composition root: the only module that may import every other module.
+import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
+import { createKeyLookup } from './config/key-lookup.ts';
 import { ConfigError, loadConfig } from './config/load-config.ts';
 import type { EventConfig } from './config/load-config.ts';
 import { buildApp } from './http/build-app.ts';
+import { createIngest } from './ingest/ingest.ts';
+import { openStore } from './store/open-store.ts';
+import type { Store } from './store/open-store.ts';
 
 const HOST = '127.0.0.1'; // AD-11: never bind anything else, in any environment.
 const repoRoot = resolve(import.meta.dirname, '..', '..');
@@ -28,12 +33,45 @@ try {
   throw err;
 }
 
+const dbPath = resolve(dataDir, 'tracker.db');
+let store: Store;
+try {
+  mkdirSync(dataDir, { recursive: true });
+  store = openStore(dbPath);
+} catch (err) {
+  console.error(`Cannot open the data store at ${dbPath}: ${(err as Error).message}`);
+  process.exit(1);
+}
+const ingest = createIngest({ store, findRunner: createKeyLookup(config), now: Date.now });
+
 // JSON logs to stdout; writing them under data/logs is Story 4.2.
-const app = buildApp({ config, now: Date.now, logger: true, webRoot });
+const app = buildApp({ config, ingest, now: Date.now, logger: true, webRoot });
+
+let shuttingDown = false;
+async function shutdown(signal: string): Promise<void> {
+  // A second signal while close() hangs forces the exit.
+  if (shuttingDown) process.exit(1);
+  shuttingDown = true;
+  app.log.info({ signal }, 'shutting down');
+  let exitCode = 0;
+  try {
+    await app.close();
+  } catch (err) {
+    app.log.error({ err }, 'failed to close the server');
+    exitCode = 1;
+  } finally {
+    // After app.close(): no request can still be writing.
+    store.close();
+  }
+  process.exit(exitCode);
+}
+for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => void shutdown(signal));
+
 try {
   await app.listen({ host: HOST, port });
-  app.log.info({ eventId: config.eventId, configPath, dataDir, webRoot }, 'server ready');
+  app.log.info({ eventId: config.eventId, configPath, dataDir, dbPath, webRoot }, 'server ready');
 } catch (err) {
   app.log.error({ err }, 'failed to start');
+  store.close();
   process.exit(1);
 }
