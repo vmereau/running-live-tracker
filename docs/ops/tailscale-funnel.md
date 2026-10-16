@@ -85,12 +85,12 @@ take a few minutes to propagate.
 
 <!-- Filled in after the human runs the phone test (Story 1.2). -->
 
-- Date:
-- Tailscale version:
-- Phone / browser / carrier:
-- Duration kept open:
-- Snapshot received:
-- Pings (count, typical gap, max gap):
-- Disconnects / reconnects:
-- Buffering observed:
-- **Decision for Story 1.6:** SSE works / polling fallback needed
+- Date: 2026-10-16
+- Tailscale version: 1.98.4 (home PC)
+- Phone / browser / carrier: not recorded
+- Duration kept open: 5+ minutes (per the test protocol)
+- Snapshot received: yes
+- Pings (count, typical gap, max gap): not recorded in detail; stream stayed alive
+- Disconnects / reconnects: none reported
+- Buffering observed: none reported
+- **Decision for Story 1.6:** SSE works (reported by the human tester: "Funnel works fine")

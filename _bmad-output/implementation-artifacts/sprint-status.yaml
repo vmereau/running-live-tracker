@@ -29,7 +29,7 @@
 # - Dev moves story to 'review', then runs code-review (fresh context, different LLM recommended)
 # - Retrospective appends its action items to action_items; the status view surfaces open ones
 generated: 10-15-2026 21:00
-last_updated: 10-15-2026 23:45
+last_updated: 10-16-2026 12:00
 project: running-live-tracker
 project_key: NOKEY
 tracking_system: file-system
@@ -37,7 +37,7 @@ story_location: _bmad-output/implementation-artifacts
 development_status:
   epic-1: in-progress
   1-1-project-scaffold-wire-contract-and-health-check: done
-  1-2-live-stream-spike-through-tailscale-funnel: review
+  1-2-live-stream-spike-through-tailscale-funnel: done
   1-3-runner-keys-and-authenticated-ingest: backlog
   1-4-runner-simulator: backlog
   1-5-live-runner-projection-and-change-events: backlog

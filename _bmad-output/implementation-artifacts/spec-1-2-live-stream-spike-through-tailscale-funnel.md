@@ -85,7 +85,7 @@ context:
 - The hub test covers "client leaves → client count 0, timer cleared" over a real socket. The app-level test checks that an abort leaves the server healthy, because `buildApp` does not expose the hub.
 - Web: the SSE frame splitter lives in `web/src/sse-frames.ts` with a `node:test` test. Test files get Node types through `web/tsconfig.test.json` (the web typecheck runs both configs), so browser code stays free of Node globals. A `/// <reference types="node" />` was rejected by dependency-cruiser (`not-to-unresolvable`).
 - Verified locally: `pnpm check` exits 0. `curl -N /api/v1/live` for 45 s shows the snapshot at once and pings at +20 s and +40 s. Headers: `text/event-stream`, `no-cache, no-transform`, `X-Accel-Buffering: no`, no `Content-Encoding` even with `Accept-Encoding: gzip`. In Chrome, the built diagnostic page at `/` shows EventSource open (1 open, 0 errors, 1 snapshot) and pings exactly 20.0 s apart.
-- Still open: the human-run Funnel and phone test, and its outcome in `docs/ops/tailscale-funnel.md` (AC 3).
+- Funnel phone test done by the human on 2026-10-16: SSE works through Funnel. Outcome recorded in `docs/ops/tailscale-funnel.md` (AC 3 closed).
 
 ## Spec Change Log
 
