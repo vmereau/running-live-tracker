@@ -22,7 +22,7 @@ Story 1.6's transport: SSE, or polling `GET /api/v1/snapshot` every 5 s.
 
   ```sh
   pnpm install
-  pnpm --filter web build          # the diagnostic page served at /
+  pnpm --filter web build          # the map at /, the diagnostic page at /diagnostic.html
   EVENT_CONFIG=config/event.example.json pnpm dev        # Git Bash
   ```
 
@@ -50,7 +50,8 @@ to `http://127.0.0.1:8787`. The server keeps listening on localhost only.
 ## URL shape
 
 ```
-https://<machine-name>.<tailnet-name>.ts.net/                  diagnostic page (later: the live map)
+https://<machine-name>.<tailnet-name>.ts.net/                  live map
+https://<machine-name>.<tailnet-name>.ts.net/diagnostic.html   live-stream diagnostic page
 https://<machine-name>.<tailnet-name>.ts.net/api/v1/live       SSE stream
 https://<machine-name>.<tailnet-name>.ts.net/api/v1/snapshot   snapshot JSON (polling fallback)
 https://<machine-name>.<tailnet-name>.ts.net/api/v1/health     health check
@@ -65,7 +66,7 @@ take a few minutes to propagate.
    `curl -N https://<host>.ts.net/api/v1/live` shows the snapshot and then pings.
 2. On the phone, **turn Wi-Fi off** so it uses mobile data, and make sure it is
    not on the tailnet (Tailscale app off), so traffic really goes through Funnel.
-3. Open `https://<host>.ts.net/`. Keep the screen on and the browser in the
+3. Open `https://<host>.ts.net/diagnostic.html`. Keep the screen on and the browser in the
    foreground for **at least 5 minutes**.
 4. Read the diagnostic page:
    - **EventSource**: state should stay `open`, *Opens* 1, *Errors* 0,

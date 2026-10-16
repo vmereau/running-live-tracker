@@ -8,7 +8,7 @@ This repo is a pnpm workspace:
 | Package | Path | What it is |
 | --- | --- | --- |
 | `@running-live-tracker/server` | `server/` | Fastify server, run directly by Node (native type stripping) |
-| `@running-live-tracker/web` | `web/` | Vite app (vanilla TS), served by the server at `/` from `web/dist/` (for now a live-stream diagnostic page; the map arrives in Story 1.6) |
+| `@running-live-tracker/web` | `web/` | Vite app (vanilla TS), served by the server at `/` from `web/dist/`: the live map at `/`, and the Story 1.2 live-stream diagnostic page at `/diagnostic.html` |
 | `@running-live-tracker/shared` | `shared/` | Wire contract (`src/contract.ts`, zod) and JSON fixtures |
 
 ## Prerequisites
@@ -45,7 +45,8 @@ cp config/event.example.json config/event.json
 | `pnpm dev` | Start the server on `127.0.0.1` |
 | `pnpm keygen <runnerId>` | Make a new runner key: prints the key (for the runner's phone only), its `keyHash` and a runner entry to paste into `config/event.json` |
 | `pnpm simulate --base-url <url> --gpx <file> --key <k> …` | Replay a GPX file as one or more simulated runners through the real ingest API (see [Simulating runners](#simulating-runners)) |
-| `pnpm --filter web build` | Build the web app into `web/dist/` |
+| `pnpm --filter web build` | Build the web app (`index.html` map + `diagnostic.html`) into `web/dist/` |
+| `pnpm --filter web dev` | Vite dev server for the web app; `/api` is proxied to `http://127.0.0.1:8787` |
 
 ## Runner keys
 
@@ -68,9 +69,9 @@ All read endpoints are public (no auth). The server binds `127.0.0.1` only.
 | --- | --- |
 | `GET /api/v1/health` | `{"ok":true,"serverNow":...,"eventId":"..."}` |
 | `GET /api/v1/snapshot` | The current `Snapshot` (event info, one view and one track per runner). Polling fallback. |
-| `GET /api/v1/live` | Server-Sent Events: an `event: snapshot` frame on connect, then a `: ping` comment every 20 s |
+| `GET /api/v1/live` | Server-Sent Events: an `event: snapshot` frame on connect, then `track` (appended points) and `runner` (replaced view) frames on every change, and a `: ping` comment every 20 s |
 | `POST /api/v1/ingest` | Runner positions (auth: `Authorization: Bearer <runnerKey>`). Body: one `IngestBatch` (one session, strictly increasing `seq`, at most 200 records). Reply: `IngestAck` `{"sessionId","ackedThroughSeq","serverNow"}`. Resending a batch is safe: already stored `seq`s are ignored. |
-| `GET /` | The built web app from `web/dist/` (run `pnpm --filter web build` first; skipped with a warning if missing) |
+| `GET /` | The live map (Leaflet, OpenStreetMap tiles): one colored marker and track per runner, a runner list with ticking "last update" ages; tap a runner to highlight it. `GET /diagnostic.html` is the live-stream diagnostic page. Both come from `web/dist/` (run `pnpm --filter web build` first; skipped with a warning if missing) |
 
 ```sh
 curl http://127.0.0.1:8787/api/v1/health

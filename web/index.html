@@ -3,48 +3,12 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Live stream diagnostic</title>
-    <style>
-      body { font: 15px/1.4 system-ui, sans-serif; margin: 0; padding: 12px; background: #fff; color: #111; }
-      h1 { font-size: 18px; margin: 0 0 8px; }
-      h2 { font-size: 15px; margin: 16px 0 4px; }
-      dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 12px; margin: 0; }
-      dt { color: #555; }
-      dd { margin: 0; font-variant-numeric: tabular-nums; word-break: break-word; }
-      .ok { color: #11772b; font-weight: 600; }
-      .bad { color: #b00020; font-weight: 600; }
-      ol { margin: 0; padding: 0; list-style: none; font: 13px/1.4 ui-monospace, monospace; }
-      li { padding: 2px 0; border-bottom: 1px solid #eee; }
-      li.slow { color: #b00020; }
-    </style>
+    <title>Live runners</title>
   </head>
   <body>
-    <h1>Live stream diagnostic</h1>
-    <p id="intro">Keep this page open and the screen on. Pings should arrive about every 20 s.</p>
-
-    <h2>EventSource (what the map will use)</h2>
-    <dl>
-      <dt>State</dt><dd id="es-state">connecting</dd>
-      <dt>Opens</dt><dd id="es-opens">0</dd>
-      <dt>Errors</dt><dd id="es-errors">0</dd>
-      <dt>Snapshots</dt><dd id="es-snapshots">0</dd>
-      <dt>Last snapshot</dt><dd id="es-last">-</dd>
-    </dl>
-
-    <h2>Raw stream (sees pings)</h2>
-    <dl>
-      <dt>State</dt><dd id="raw-state">connecting</dd>
-      <dt>Connected for</dt><dd id="raw-elapsed">-</dd>
-      <dt>Reconnects</dt><dd id="raw-reconnects">0</dd>
-      <dt>Event</dt><dd id="raw-event">-</dd>
-      <dt>Runners</dt><dd id="raw-runners">-</dd>
-      <dt>Pings</dt><dd id="raw-pings">0</dd>
-      <dt>Max gap</dt><dd id="raw-maxgap">-</dd>
-    </dl>
-
-    <h2>Frames (newest first)</h2>
-    <ol id="log"></ol>
-
+    <div id="map" aria-label="Live map"></div>
+    <section id="panel" class="panel" aria-label="Runners"></section>
+    <div id="banner" class="banner" role="status">connecting…</div>
     <script type="module" src="/src/main.ts"></script>
   </body>
 </html>
