@@ -44,6 +44,7 @@ cp config/event.example.json config/event.json
 | `pnpm depcruise` | Enforce the architecture's module graph (`.dependency-cruiser.cjs`) |
 | `pnpm dev` | Start the server on `127.0.0.1` |
 | `pnpm keygen <runnerId>` | Make a new runner key: prints the key (for the runner's phone only), its `keyHash` and a runner entry to paste into `config/event.json` |
+| `pnpm simulate --base-url <url> --gpx <file> --key <k> …` | Replay a GPX file as one or more simulated runners through the real ingest API (see [Simulating runners](#simulating-runners)) |
 | `pnpm --filter web build` | Build the web app into `web/dist/` |
 
 ## Runner keys
@@ -94,6 +95,44 @@ Ingest errors (`{"error":{"code","message"}}`); a rejected batch stores nothing:
 | 409 | `SESSION_OWNER_MISMATCH` | The `sessionId` already belongs to another runner |
 
 The runner is always the key's owner; a `runnerId` in the body is ignored.
+
+## Simulating runners
+
+Until the Android app exists, `pnpm simulate` feeds realistic positions through
+`POST /api/v1/ingest`, behaving the way the phone will: each `--key` becomes one runner
+with its own session, records a fix every 5 s (of simulated run time) into an in-memory
+outbox while walking the GPX at a constant pace, and uploads the outbox oldest first in
+batches of at most 200 records, deleting what the server acks. Network errors, 5xx, 401
+and 429 are retried with backoff (1 s, 2 s, 4 s … capped at 60 s); a 400/409/413 batch is
+dropped and logged. Each runner finishes with an `end` record. The exit code is 0 when
+every record was acked, 1 otherwise. The simulator never prints a key, but `pnpm`
+echoes the command line (keys included) before running a script: use `pnpm -s simulate …`
+when the output is shared or saved.
+
+```sh
+# one runner, real time, on the local server
+pnpm simulate --base-url http://127.0.0.1:8787 --gpx shared/fixtures/gpx/out-and-back.gpx --key <key>
+
+# two runners (5:00 and 5:30 /km) 30 s apart, 20x faster than real time,
+# everyone offline from 2 min to 3 min, runner 1 also offline from 6 min for 90 s
+pnpm simulate --base-url http://127.0.0.1:8787 --gpx shared/fixtures/gpx/lap.gpx --key <alice-key> --key <bob-key> --pace 5:00,5:30 --time-scale 20 --stagger 30s --gap 2m+1m --gap 1:6m+90s
+
+# through the public Funnel URL: same code, just an https base URL
+pnpm simulate --base-url https://<machine>.<tailnet>.ts.net --gpx shared/fixtures/gpx/straight.gpx --key <key>
+```
+
+| Option | Meaning |
+| --- | --- |
+| `--base-url` | Server base URL; posts go to `<base>/api/v1/ingest` |
+| `--gpx` | GPX file: the points of every segment of its first track, or of its first route |
+| `--key` | Runner key (from `pnpm keygen`); repeat for more runners |
+| `--pace` | min/km, default `5:00`; a comma list gives one pace per runner in key order, a shorter list repeats its last value |
+| `--time-scale` | Simulated seconds per wall-clock second, default `1`. `recordedAt` always follows simulated run time, so the pace looks realistic |
+| `--stagger` | Runner *i* (0-based) starts *i* × stagger of simulated time later, default `0` |
+| `--gap` | `[i:]<at>+<duration>`: offline from `<at>` for `<duration>` of the runner's simulated run time. Fixes keep being recorded; the backlog is uploaded when the gap ends (or at the finish). Without `i:` it applies to every runner. Repeatable |
+
+Durations take an `s`, `m` or `h` suffix (a bare number is seconds). Sample tracks are in
+`shared/fixtures/gpx/` (`straight.gpx`, `out-and-back.gpx`, `lap.gpx`).
 
 ## Public access
 

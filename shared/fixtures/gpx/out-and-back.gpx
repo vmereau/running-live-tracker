@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="running-live-tracker fixtures" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Out and back (Quai Branly)</name>
+  </metadata>
+  <trk>
+    <name>Out and back</name>
+    <trkseg>
+      <trkpt lat="48.858204" lon="2.294485"/>
+      <trkpt lat="48.858502" lon="2.295073"/>
+      <trkpt lat="48.858788" lon="2.295657"/>
+      <trkpt lat="48.859067" lon="2.296226"/>
+      <trkpt lat="48.859350" lon="2.296810"/>
+      <trkpt lat="48.859603" lon="2.297344"/>
+      <trkpt lat="48.859832" lon="2.297886"/>
+      <trkpt lat="48.860066" lon="2.298442"/>
+      <trkpt lat="48.860294" lon="2.298994"/>
+      <trkpt lat="48.860536" lon="2.299621"/>
+      <trkpt lat="48.860736" lon="2.300217"/>
+      <trkpt lat="48.860960" lon="2.300795"/>
+      <trkpt lat="48.861188" lon="2.301377"/>
+      <trkpt lat="48.861393" lon="2.301985"/>
+      <trkpt lat="48.861555" lon="2.302581"/>
+      <trkpt lat="48.861723" lon="2.303205"/>
+      <trkpt lat="48.861887" lon="2.303823"/>
+      <trkpt lat="48.862039" lon="2.304371"/>
+      <trkpt lat="48.862164" lon="2.304922"/>
+      <trkpt lat="48.862284" lon="2.305438"/>
+      <trkpt lat="48.862382" lon="2.305986"/>
+      <trkpt lat="48.862485" lon="2.306523"/>
+      <trkpt lat="48.862604" lon="2.307085"/>
+      <trkpt lat="48.862709" lon="2.307649"/>
+      <trkpt lat="48.862807" lon="2.308186"/>
+      <trkpt lat="48.862714" lon="2.307636"/>
+      <trkpt lat="48.862595" lon="2.307122"/>
+      <trkpt lat="48.862486" lon="2.306549"/>
+      <trkpt lat="48.862382" lon="2.306023"/>
+      <trkpt lat="48.862280" lon="2.305473"/>
+      <trkpt lat="48.862133" lon="2.304922"/>
+      <trkpt lat="48.862014" lon="2.304376"/>
+      <trkpt lat="48.861902" lon="2.303810"/>
+      <trkpt lat="48.861717" lon="2.303185"/>
+      <trkpt lat="48.861540" lon="2.302604"/>
+      <trkpt lat="48.861359" lon="2.302015"/>
+      <trkpt lat="48.861207" lon="2.301412"/>
+      <trkpt lat="48.860975" lon="2.300774"/>
+      <trkpt lat="48.860736" lon="2.300223"/>
+      <trkpt lat="48.860512" lon="2.299610"/>
+      <trkpt lat="48.860314" lon="2.298975"/>
+      <trkpt lat="48.860076" lon="2.298470"/>
+      <trkpt lat="48.859843" lon="2.297925"/>
+      <trkpt lat="48.859597" lon="2.297346"/>
+      <trkpt lat="48.859341" lon="2.296812"/>
+      <trkpt lat="48.859076" lon="2.296219"/>
+      <trkpt lat="48.858765" lon="2.295645"/>
+      <trkpt lat="48.858501" lon="2.295078"/>
+      <trkpt lat="48.858195" lon="2.294507"/>
+    </trkseg>
+  </trk>
+</gpx>

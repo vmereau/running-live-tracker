@@ -13,6 +13,7 @@
     "depcruise": "depcruise server shared web --config .dependency-cruiser.cjs",
     "dev": "node server/src/main.ts",
     "keygen": "node server/scripts/keygen.ts",
+    "simulate": "node server/scripts/simulate-runner.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

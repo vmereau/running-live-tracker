@@ -1,0 +1,124 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="running-live-tracker fixtures" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Lap (Jardin du Luxembourg)</name>
+  </metadata>
+  <trk>
+    <name>Lap</name>
+    <trkseg>
+      <trkpt lat="48.846206" lon="2.334323">
+        <ele>67.3</ele>
+      </trkpt>
+      <trkpt lat="48.846598" lon="2.334360">
+        <ele>67.3</ele>
+      </trkpt>
+      <trkpt lat="48.847001" lon="2.334518">
+        <ele>68.0</ele>
+      </trkpt>
+      <trkpt lat="48.847363" lon="2.334721">
+        <ele>67.7</ele>
+      </trkpt>
+      <trkpt lat="48.847688" lon="2.334967">
+        <ele>68.0</ele>
+      </trkpt>
+      <trkpt lat="48.847973" lon="2.335338">
+        <ele>68.2</ele>
+      </trkpt>
+      <trkpt lat="48.848206" lon="2.335713">
+        <ele>67.3</ele>
+      </trkpt>
+      <trkpt lat="48.848373" lon="2.336176">
+        <ele>66.9</ele>
+      </trkpt>
+      <trkpt lat="48.848495" lon="2.336643">
+        <ele>66.4</ele>
+      </trkpt>
+      <trkpt lat="48.848534" lon="2.337143">
+        <ele>64.9</ele>
+      </trkpt>
+      <trkpt lat="48.848507" lon="2.337626">
+        <ele>64.2</ele>
+      </trkpt>
+      <trkpt lat="48.848425" lon="2.338095">
+        <ele>63.2</ele>
+      </trkpt>
+      <trkpt lat="48.848265" lon="2.338553">
+        <ele>62.0</ele>
+      </trkpt>
+      <trkpt lat="48.848049" lon="2.338982">
+        <ele>61.9</ele>
+      </trkpt>
+      <trkpt lat="48.847779" lon="2.339337">
+        <ele>60.9</ele>
+      </trkpt>
+      <trkpt lat="48.847435" lon="2.339638">
+        <ele>59.6</ele>
+      </trkpt>
+      <trkpt lat="48.847097" lon="2.339870">
+        <ele>58.1</ele>
+      </trkpt>
+      <trkpt lat="48.846698" lon="2.339984">
+        <ele>57.4</ele>
+      </trkpt>
+      <trkpt lat="48.846299" lon="2.340047">
+        <ele>57.2</ele>
+      </trkpt>
+    </trkseg>
+    <trkseg>
+      <trkpt lat="48.845921" lon="2.340035">
+        <ele>56.2</ele>
+      </trkpt>
+      <trkpt lat="48.845508" lon="2.339952">
+        <ele>56.0</ele>
+      </trkpt>
+      <trkpt lat="48.845143" lon="2.339781">
+        <ele>56.0</ele>
+      </trkpt>
+      <trkpt lat="48.844807" lon="2.339512">
+        <ele>55.9</ele>
+      </trkpt>
+      <trkpt lat="48.844500" lon="2.339156">
+        <ele>55.9</ele>
+      </trkpt>
+      <trkpt lat="48.844261" lon="2.338808">
+        <ele>56.2</ele>
+      </trkpt>
+      <trkpt lat="48.844071" lon="2.338356">
+        <ele>56.6</ele>
+      </trkpt>
+      <trkpt lat="48.843922" lon="2.337894">
+        <ele>57.3</ele>
+      </trkpt>
+      <trkpt lat="48.843856" lon="2.337393">
+        <ele>58.6</ele>
+      </trkpt>
+      <trkpt lat="48.843875" lon="2.336909">
+        <ele>59.8</ele>
+      </trkpt>
+      <trkpt lat="48.843937" lon="2.336422">
+        <ele>60.1</ele>
+      </trkpt>
+      <trkpt lat="48.844076" lon="2.335944">
+        <ele>61.2</ele>
+      </trkpt>
+      <trkpt lat="48.844282" lon="2.335529">
+        <ele>62.7</ele>
+      </trkpt>
+      <trkpt lat="48.844560" lon="2.335174">
+        <ele>63.2</ele>
+      </trkpt>
+      <trkpt lat="48.844870" lon="2.334867">
+        <ele>64.6</ele>
+      </trkpt>
+      <trkpt lat="48.845212" lon="2.334604">
+        <ele>65.0</ele>
+      </trkpt>
+      <trkpt lat="48.845582" lon="2.334431">
+        <ele>66.0</ele>
+      </trkpt>
+      <trkpt lat="48.845982" lon="2.334352">
+        <ele>66.9</ele>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

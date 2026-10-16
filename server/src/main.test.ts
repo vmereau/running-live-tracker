@@ -195,3 +195,66 @@ for (const bad of ['abc', '0x50', '8e3', '0', '70000']) {
     assert.match(stderr, /Invalid PORT/);
   });
 }
+
+test('simulator end to end: a fixture GPX with an offline gap lands once, in order, under the key runner', { timeout: 30_000 }, async () => {
+  const { key, keyHash } = generateKey('alice');
+  const dataDir = mkdtempSync(join(tmpdir(), 'rlt-sim-'));
+  const configPath = join(mkdtempSync(join(tmpdir(), 'rlt-sim-config-')), 'event.json');
+  const example = JSON.parse(readFileSync(exampleConfig, 'utf8')) as { runners: { runnerId: string; keyHash: string }[] };
+  example.runners[0]!.keyHash = keyHash;
+  writeFileSync(configPath, JSON.stringify(example));
+  const gpx = join(import.meta.dirname, '..', '..', 'shared', 'fixtures', 'gpx', 'out-and-back.gpx');
+
+  const port = await freePort();
+  const server = startMain({ PORT: String(port), EVENT_CONFIG: configPath, DATA_DIR: dataDir });
+  let sim: ReturnType<typeof spawn> | undefined;
+  try {
+    const { ready, logs } = waitForReady(server);
+    await ready;
+    // ~2.3 km at 3:00/km is ~410 s of run time; at 400x that is about one second.
+    sim = spawn(
+      process.execPath,
+      [
+        join(import.meta.dirname, '..', 'scripts', 'simulate-runner.ts'),
+        '--base-url', `http://127.0.0.1:${port}`,
+        '--gpx', gpx,
+        '--key', key,
+        '--pace', '3:00',
+        '--time-scale', '400',
+        '--gap', '1m+2m',
+      ],
+      { stdio: ['ignore', 'pipe', 'pipe'] },
+    );
+    let out = '';
+    sim.stdout!.setEncoding('utf8').on('data', (c: string) => (out += c));
+    sim.stderr!.setEncoding('utf8').on('data', (c: string) => (out += c));
+    const [code] = (await once(sim, 'exit')) as [number | null];
+    assert.equal(code, 0, out);
+    assert.ok(!out.includes(key), 'simulator output must not contain the key');
+    assert.match(out, /every record acked/);
+
+    const db = new Database(join(dataDir, 'tracker.db'));
+    try {
+      const sessions = db.prepare('SELECT sessionId, runnerId FROM sessions').all() as { sessionId: string; runnerId: string }[];
+      assert.equal(sessions.length, 1);
+      assert.equal(sessions[0]!.runnerId, 'alice');
+      const records = db
+        .prepare('SELECT seq, kind FROM records WHERE sessionId = ? ORDER BY seq')
+        .all(sessions[0]!.sessionId) as { seq: number; kind: string }[];
+      assert.ok(records.length > 80, `${records.length} records`);
+      assert.deepEqual(records.map((r) => r.seq), records.map((_, i) => i), 'contiguous seqs from 0');
+      assert.equal(records.at(-1)!.kind, 'end');
+      assert.ok(records.slice(0, -1).every((r) => r.kind === 'fix'));
+    } finally {
+      db.close();
+    }
+
+    await new Promise((r) => setTimeout(r, 100)); // let the last log lines arrive
+    const accepted = logs.filter((l) => l['msg'] === 'ingest batch accepted');
+    // The 2 min gap holds ~24 fixes, posted as one larger batch when it ends.
+    assert.ok(accepted.some((l) => (l['recordCount'] as number) >= 20), JSON.stringify(accepted.map((l) => l['recordCount'])));
+  } finally {
+    sim?.kill();
+    server.kill();
+  }
+});

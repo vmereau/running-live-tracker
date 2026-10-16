@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="running-live-tracker fixtures" xmlns="http://www.topografix.com/GPX/1/1">
+  <metadata>
+    <name>Straight (Champs-Elysees)</name>
+  </metadata>
+  <trk>
+    <name>Straight</name>
+    <trkseg>
+      <trkpt lat="48.865587" lon="2.321217"/>
+      <trkpt lat="48.865801" lon="2.320528"/>
+      <trkpt lat="48.866020" lon="2.319881"/>
+      <trkpt lat="48.866215" lon="2.319230"/>
+      <trkpt lat="48.866434" lon="2.318562"/>
+      <trkpt lat="48.866638" lon="2.317906"/>
+      <trkpt lat="48.866849" lon="2.317229"/>
+      <trkpt lat="48.867043" lon="2.316589"/>
+      <trkpt lat="48.867259" lon="2.315902"/>
+      <trkpt lat="48.867465" lon="2.315259"/>
+      <trkpt lat="48.867678" lon="2.314613"/>
+      <trkpt lat="48.867863" lon="2.313941"/>
+      <trkpt lat="48.868091" lon="2.313288"/>
+      <trkpt lat="48.868291" lon="2.312623"/>
+      <trkpt lat="48.868504" lon="2.311977"/>
+      <trkpt lat="48.868697" lon="2.311293"/>
+      <trkpt lat="48.868916" lon="2.310633"/>
+      <trkpt lat="48.869104" lon="2.309972"/>
+      <trkpt lat="48.869318" lon="2.309312"/>
+      <trkpt lat="48.869538" lon="2.308662"/>
+      <trkpt lat="48.869740" lon="2.308015"/>
+      <trkpt lat="48.869928" lon="2.307331"/>
+      <trkpt lat="48.870148" lon="2.306680"/>
+      <trkpt lat="48.870351" lon="2.306007"/>
+      <trkpt lat="48.870571" lon="2.305342"/>
+      <trkpt lat="48.870763" lon="2.304694"/>
+      <trkpt lat="48.870978" lon="2.304057"/>
+      <trkpt lat="48.871180" lon="2.303366"/>
+      <trkpt lat="48.871384" lon="2.302711"/>
+      <trkpt lat="48.871590" lon="2.302057"/>
+      <trkpt lat="48.871795" lon="2.301401"/>
+    </trkseg>
+  </trk>
+</gpx>
