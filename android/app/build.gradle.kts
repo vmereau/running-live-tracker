@@ -58,10 +58,20 @@ android {
         compose = true
         buildConfig = true
     }
+
+    // Robolectric tests resolve R.string and render Compose screens.
+    testOptions {
+        unitTests.isIncludeAndroidResources = true
+    }
 }
 
 kotlin {
     jvmToolchain(17)
+}
+
+// Room schema JSON (committed) so later stories can write and test migrations.
+ksp {
+    arg("room.schemaLocation", "$projectDir/schemas")
 }
 
 // JVM contract tests read the shared fixtures straight from the repo (shared/fixtures).
@@ -82,9 +92,16 @@ dependencies {
     implementation(libs.room.runtime)
     ksp(libs.room.compiler)
     implementation(libs.play.services.location)
+    implementation(libs.kotlinx.coroutines.play.services)
     implementation(libs.kotlinx.serialization.json)
     implementation(libs.okhttp)
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.robolectric)
+    testImplementation(libs.androidx.test.core)
+    testImplementation(platform(libs.compose.bom))
+    testImplementation(libs.compose.ui.test.junit4)
+    // Registers the empty ComponentActivity that createComposeRule() launches (debug only).
+    debugImplementation(libs.compose.ui.test.manifest)
 }

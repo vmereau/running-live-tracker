@@ -146,15 +146,40 @@ plugin 2.4.21, no `kotlin-android`, no kapt), KSP 2.3.12, Compose BOM 2026.09.00
 DataStore Preferences 1.2.1, compileSdk / targetSdk / minSdk 37 / 36 / 29, Gradle 9.6.1 through
 the wrapper, JDK 17 toolchain.
 
-So far the app has one settings screen: the server URL and the runner key (from
-`pnpm keygen`), saved in DataStore, plus a "Test connection" button that calls
-`GET /api/v1/health`. Rules:
+The app has three screens: the main screen (tracking state, elapsed time since Start, count of
+recorded fixes, Start / Stop), a Permissions setup screen and Settings. Settings hold the server
+URL and the runner key (from `pnpm keygen`), saved in DataStore, plus a "Test connection" button
+that calls `GET /api/v1/health`. Rules:
 
 - The key is trimmed and must be 43 base64url characters.
 - The URL must be `https://<host>` (a port and a path prefix are allowed). Debug builds also accept `http://localhost`
   (physical phone through `adb reverse tcp:8787 tcp:8787`) and `http://10.0.2.2` (emulator).
   A trailing `/` is dropped; a query or fragment is rejected. Release builds pin cleartext
   off in the network security config; `app/src/debug/res/xml/` overrides it for those two hosts.
+
+- The key field is locked while a session is active (the session keeps the key captured at Start).
+
+Tracking: Start sends a command to the foreground `TrackingService` (type `location`, persistent
+notification, GPS every 5 s at high accuracy). It is the only writer of the Room database
+(`tracking.db`, schema JSON committed under `app/schemas/`): a `sessions` row (UUIDv4
+`sessionId`, `sessionStartedAt`, captured key, next seq, fix count) and an `outbox` of wire
+records keyed by `(sessionId, seq)`. Fixes without accuracy or with out-of-range values are
+dropped before the insert. Stop (behind a confirmation dialog; the notification has no Stop
+action) removes location updates, writes the queued fixes, then an `end` record with the next
+seq. The service is `START_STICKY` and resumes the same session after the OS kills it; opening
+the app with an active session also resumes it. Uploading the outbox comes with Story 2.3.
+
+Start stays disabled until the settings are valid and the Permissions screen shows every item
+granted:
+
+- Precise location (fine + coarse).
+- Location "Allow all the time" (background), requested after precise location; Android
+  opens its settings page for it.
+- Notifications (Android 13+).
+- No battery optimization (`ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS`).
+
+If a permission was denied, its button opens the app's system settings instead. The list is
+re-checked every time the app comes back to the foreground.
 
 The wire contract is hand-written in `app/src/main/java/com/runninglivetracker/contract/Contract.kt`
 and checked by JVM tests against `shared/fixtures` (valid fixtures round-trip, invalid ones are
@@ -180,6 +205,23 @@ release APK is signed with the debug key, so it is always installable.
 
 Try it on the emulator: run `pnpm dev`, install the debug APK, enter `http://10.0.2.2:8787`
 and press Test connection: it shows `Connected — event <eventId>`.
+
+Manual tracking check on a real phone (debug APK, so `run-as` works):
+
+1. Grant everything on the Permissions screen, press Start: the "Tracking your run"
+   notification appears.
+2. Lock the phone for 5 minutes, unlock: the fix count is about 60 and the elapsed time is right.
+3. Lock again and kill the process with `adb shell am kill com.runninglivetracker` (or let the
+   OS do it): tracking resumes on its own and the fix count keeps growing.
+4. Press Stop and confirm, then inspect the outbox:
+
+```sh
+adb shell "run-as com.runninglivetracker sqlite3 databases/tracking.db 'SELECT sessionId, seq, kind FROM outbox ORDER BY sessionId, seq'"
+```
+
+The seq values are contiguous from 0 for each session and the last row is `end`. If the phone
+has no `sqlite3`, copy the database out (`adb exec-out run-as com.runninglivetracker cat
+databases/tracking.db > tracking.db`, plus the `-wal` file) and open it locally.
 
 ## Public access
 

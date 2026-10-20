@@ -49,11 +49,15 @@ fun SettingsScreen(
     repository: SettingsRepository,
     healthClient: HealthClient,
     allowCleartext: Boolean,
+    /** True while a session is active: the key field is disabled and a changed key cannot be saved. */
+    keyLocked: Boolean = false,
+    onBack: (() -> Unit)? = null,
 ) {
     val scope = rememberCoroutineScope()
     var loaded by rememberSaveable { mutableStateOf(false) }
     var baseUrl by rememberSaveable { mutableStateOf("") }
     var runnerKey by rememberSaveable { mutableStateOf("") }
+    var savedKey by rememberSaveable { mutableStateOf("") }
     var urlError by rememberSaveable { mutableStateOf<String?>(null) }
     var keyError by rememberSaveable { mutableStateOf<String?>(null) }
     var showKey by rememberSaveable { mutableStateOf(false) }
@@ -61,6 +65,7 @@ fun SettingsScreen(
     // Not saveable: the call dies with this composition's scope, so a restored `true` would stick.
     var testing by remember { mutableStateOf(false) }
     val savedText = stringResource(R.string.saved)
+    val keyLockedText = stringResource(R.string.key_locked)
 
     // Fill the fields once from DataStore (not again after a rotation, to keep edits).
     LaunchedEffect(Unit) {
@@ -68,6 +73,7 @@ fun SettingsScreen(
             val saved = repository.settings.first()
             baseUrl = saved.baseUrl
             runnerKey = saved.runnerKey
+            savedKey = saved.runnerKey
             loaded = true
         }
     }
@@ -105,9 +111,9 @@ fun SettingsScreen(
             onValueChange = { runnerKey = it; keyError = null; status = null },
             label = { Text(stringResource(R.string.runner_key_label)) },
             isError = keyError != null,
-            supportingText = keyError?.let { { Text(it) } },
+            supportingText = (keyError ?: keyLockedText.takeIf { keyLocked })?.let { { Text(it) } },
             singleLine = true,
-            enabled = loaded,
+            enabled = loaded && !keyLocked,
             visualTransformation = if (showKey) VisualTransformation.None else PasswordVisualTransformation(),
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Password,
@@ -131,11 +137,14 @@ fun SettingsScreen(
                     urlError = (url as? Validated.Invalid)?.message
                     keyError = (key as? Validated.Invalid)?.message
                     status = null
-                    if (url is Validated.Ok && key is Validated.Ok) {
+                    if (keyLocked && key is Validated.Ok && key.value != savedKey) {
+                        keyError = keyLockedText
+                    } else if (url is Validated.Ok && key is Validated.Ok) {
                         baseUrl = url.value
                         runnerKey = key.value
                         scope.launch {
                             repository.save(Settings(baseUrl = url.value, runnerKey = key.value))
+                            savedKey = key.value
                             status = savedText
                         }
                     }
@@ -166,5 +175,7 @@ fun SettingsScreen(
         }
 
         status?.let { Text(it, style = MaterialTheme.typography.bodyLarge) }
+
+        onBack?.let { OutlinedButton(onClick = it) { Text(stringResource(R.string.back)) } }
     }
 }
