@@ -13,3 +13,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-4-finishing-uploads-after-stop.md`
   summary: On Android 14 and below, draining after Stop never ends when uploads are stuck on a retry (401 after a key change, invalid or cleared server URL), leaving a permanent foreground notification and a flush every 60 s.
   evidence: `onTimeout` (the only exit besides an empty outbox) runs on API 35+ only and minSdk is 29. The 2.4 decision kept strict draining "until the outbox is empty or the OS timeout". Needs a cap (time or attempts) or a skip policy, decided together with the 2.3 oldest-first deferred item.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-1-distance-pace-and-elapsed-time.md`
+  summary: Unverified (medium if true): GPS jitter from accepted fixes (≤ 30 m accuracy) on a slow or stationary runner may inflate `distanceM` and make the average pace look faster, because every accepted segment is summed with no minimum-movement filter.
+  evidence: `applyRecords` adds `segmentDistanceM` for every accepted fix. Settle it with the Epic 4 test-run comparison against the watch; if confirmed, add a movement threshold inside `domain/stats.ts`.

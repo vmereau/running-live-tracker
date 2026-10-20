@@ -1,6 +1,8 @@
-// Display formatting for the map page. Ages are the only derived numbers the
-// page computes (AD-2); everything else comes from the server as-is.
-import type { RunnerStatus } from '@running-live-tracker/shared';
+// Display formatting for the map page. Ages and elapsed time are the only derived
+// numbers the page computes (AD-2); distance and paces come from the server as-is.
+import type { RunnerStatus, RunnerView } from '@running-live-tracker/shared';
+
+const EM_DASH = '—';
 
 /** Age of the last received record, never negative; null when nothing was received yet. */
 export function ageMs(lastReceivedAt: number | null, now: number): number | null {
@@ -24,4 +26,47 @@ const STATUS_LABELS: Record<RunnerStatus, string> = {
 
 export function statusLabel(status: RunnerStatus): string {
   return STATUS_LABELS[status];
+}
+
+/** (runEndedAt ?? now) − runStartedAt, never negative; null before the run started. */
+export function elapsedMs(view: Pick<RunnerView, 'runStartedAt' | 'runEndedAt'>, now: number): number | null {
+  if (view.runStartedAt === null) return null;
+  return Math.max(0, (view.runEndedAt ?? now) - view.runStartedAt);
+}
+
+/** h:mm:ss (floored seconds); "—" for null. */
+export function formatElapsed(ms: number | null): string {
+  if (ms === null) return EM_DASH;
+  const total = Math.floor(Math.max(0, ms) / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const s = total % 60;
+  return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+/** Kilometres with one decimal: 1234 → "1.2 km". */
+export function formatDistanceKm(distanceM: number): string {
+  return `${(distanceM / 1000).toFixed(1)} km`;
+}
+
+/** m:ss /km, rounded to the nearest second (299.6 → "5:00 /km"); "—" for null. */
+export function formatPace(sPerKm: number | null): string {
+  if (sPerKm === null || !Number.isFinite(sPerKm)) return EM_DASH;
+  const total = Math.round(sPerKm);
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')} /km`;
+}
+
+export type RunnerStatsText = { elapsed: string; distance: string; currentPace: string; avgPace: string };
+
+/** The stats line of one runner row: server values formatted, elapsed measured against `now`. */
+export function runnerStatsText(
+  view: Pick<RunnerView, 'runStartedAt' | 'runEndedAt' | 'distanceM' | 'currentPaceSPerKm' | 'avgPaceSPerKm'>,
+  now: number,
+): RunnerStatsText {
+  return {
+    elapsed: formatElapsed(elapsedMs(view, now)),
+    distance: formatDistanceKm(view.distanceM),
+    currentPace: formatPace(view.currentPaceSPerKm),
+    avgPace: formatPace(view.avgPaceSPerKm),
+  };
 }

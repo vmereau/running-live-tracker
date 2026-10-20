@@ -225,7 +225,7 @@ function sessionRecords(random: () => number, startAt: number): IngestRecord[] {
   const endAt = random() < 0.7 ? Math.floor(random() * count) : -1;
   for (let i = 0; i < count; i++) {
     seq += random() < 0.15 ? 2 : 1; // seq gaps happen
-    t += random() < 0.15 ? -500 : 1_000; // so do clock steps back
+    t += random() < 0.15 ? -500 : 5_000; // so do clock steps back; 5 s steps let the 60 s pace window fill
     if (i === endAt) records.push(end(seq, t));
     else records.push(fix(seq, t, [5, 12, 30, 30.5, 80][Math.floor(random() * 5)]!));
   }
@@ -282,6 +282,7 @@ function viewer(projection: Projection) {
 
 for (const mode of ['shuffled', 'in-order'] as const) {
   test(`live state equals a fresh replay over seeded random batch orders (${mode})`, () => {
+    const seen = { distance: 0, avgPace: 0, currentPace: 0 };
     for (let seed = 1; seed <= 60; seed++) {
       const random = rng(seed);
       const a1 = { runnerId: 'alice', sessionId: S1, sessionStartedAt: 20_000 };
@@ -310,11 +311,18 @@ for (const mode of ['shuffled', 'in-order'] as const) {
         assert.deepStrictEqual(live, replaySnapshot(store), `seed ${seed}`);
         assert.deepStrictEqual(client.model(), live, `seed ${seed}: the event stream rebuilds the state`);
         Snapshot.parse(live);
+        for (const v of live.runners) {
+          if (v.distanceM > 0) seen.distance++;
+          if (v.avgPaceSPerKm !== null) seen.avgPace++;
+          if (v.currentPaceSPerKm !== null) seen.currentPace++;
+        }
         if (mode === 'in-order') assert.ok(changes.every((c) => !c.trackReset), `seed ${seed}: no reset for in-order sessions`);
       } finally {
         store.close();
       }
     }
+    // The comparison covers non-trivial stats, not just their defaults.
+    assert.ok(seen.distance > 0 && seen.avgPace > 0 && seen.currentPace > 0, JSON.stringify(seen));
   });
 }
 

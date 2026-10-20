@@ -147,3 +147,77 @@ test('compareRunKeys orders by sessionStartedAt, then sessionId, then seq', () =
   assert.ok(compareRunKeys(k(2, S1, 1), k(2, S1, 0)) > 0);
   assert.equal(compareRunKeys(k(2, S1, 1), k(2, S1, 1)), 0);
 });
+
+// ---- Story 3.1: distance and pace ----
+
+/** A fix `metres` north of (48, 2), on one meridian so distances add up exactly. */
+const north = (seq: number, recordedAt: number, metres: number, opts: Partial<RunRecord> = {}): RunRecord =>
+  fix(seq, recordedAt, { lat: 48 + metres / 111_194.93, lon: 2, ...opts });
+
+/** 11 m every 3.3 s (300 s/km) for 41 fixes: 440 m in 132 s. */
+const steady = () => Array.from({ length: 41 }, (_, i) => north(i, 1_000 + i * 3_300, i * 11));
+
+test('stats: distance sums the accepted segments; paces at 5:00 /km', () => {
+  const records = steady();
+  const view = RunnerView.parse(toRunnerView(fold(records)));
+  assert.ok(Math.abs(view.distanceM - 440) < 0.01, String(view.distanceM));
+  assert.ok(Math.abs(view.avgPaceSPerKm! - 300) < 0.01, String(view.avgPaceSPerKm));
+  assert.ok(Math.abs(view.currentPaceSPerKm! - 300) < 0.01, String(view.currentPaceSPerKm));
+});
+
+test('stats: a rejected fix leaves distance and paces unchanged', () => {
+  const base = fold(steady());
+  const after = applyRecords(base, [
+    north(41, 200_000, 2_000, { accuracyM: 31 }),
+    north(42, 1_000, 5_000), // recordedAt not after lastFixAt
+  ]);
+  assert.equal(after.distanceM, base.distanceM);
+  assert.deepStrictEqual(after.paceSamples, base.paceSamples);
+  const before = toRunnerView(base);
+  const view = toRunnerView(after);
+  assert.equal(view.distanceM, before.distanceM);
+  assert.equal(view.avgPaceSPerKm, before.avgPaceSPerKm);
+  assert.equal(view.currentPaceSPerKm, before.currentPaceSPerKm);
+});
+
+test('stats: stopped nulls the current pace only', () => {
+  const records = steady();
+  const active = toRunnerView(fold(records));
+  const stopped = RunnerView.parse(toRunnerView(fold([...records, end(41, 200_000)])));
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.currentPaceSPerKm, null);
+  assert.equal(stopped.distanceM, active.distanceM);
+  assert.equal(stopped.avgPaceSPerKm, active.avgPaceSPerKm);
+});
+
+test('stats: S1 end then S2 fix keeps summing distance across sessions', () => {
+  const s1 = [north(0, 1_000, 0), north(1, 31_000, 100), north(2, 61_000, 200), end(3, 62_000)];
+  const stopped = fold(s1);
+  const resumed = applyRecords(stopped, [north(0, 91_000, 300, { sessionId: S2, sessionStartedAt: 90_000 })]);
+  const view = RunnerView.parse(toRunnerView(resumed));
+  assert.equal(view.status, 'active');
+  assert.ok(Math.abs(view.distanceM - 300) < 0.01, String(view.distanceM));
+  assert.ok(Math.abs(view.avgPaceSPerKm! - 90 / 0.3) < 0.01, String(view.avgPaceSPerKm));
+  assert.ok(view.currentPaceSPerKm !== null && view.currentPaceSPerKm > 0);
+});
+
+test('stats: below 100 m and before the 60 s / 200 m window both paces are null', () => {
+  const short = RunnerView.parse(toRunnerView(fold([north(0, 1_000, 0), north(1, 61_000, 99)])));
+  assert.equal(short.avgPaceSPerKm, null);
+  assert.equal(short.currentPaceSPerKm, null);
+  const fast = RunnerView.parse(toRunnerView(fold([north(0, 1_000, 0), north(1, 51_000, 300)])));
+  assert.ok(fast.avgPaceSPerKm !== null);
+  assert.equal(fast.currentPaceSPerKm, null, '300 m in 50 s');
+  const slow = RunnerView.parse(toRunnerView(fold([north(0, 1_000, 0), north(1, 91_000, 150)])));
+  assert.equal(slow.currentPaceSPerKm, null, '150 m in 90 s');
+});
+
+test('stats: pace samples are pruned to the current window, identically in chunks', () => {
+  const records = steady();
+  const whole = fold(records);
+  // 18 steps are 59.4 s and 198 m, 19 steps 62.7 s and 209 m: the window starts 19 samples back.
+  assert.equal(whole.paceSamples.length, 20);
+  let chunked = initialRunnerState('alice');
+  for (let i = 0; i < records.length; i += 7) chunked = applyRecords(chunked, records.slice(i, i + 7));
+  assert.deepStrictEqual(chunked, whole);
+});

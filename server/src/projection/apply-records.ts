@@ -3,6 +3,8 @@
 // become a RunnerView plus a track. Pure: never mutates its input state.
 import type { RunnerStatus, RunnerView, TrackPoint } from '@running-live-tracker/shared';
 import type { RunKey } from '../store/open-store.ts';
+import { avgPaceSPerKm, currentPaceSPerKm, currentPaceWindowStart, segmentDistanceM } from '../domain/stats.ts';
+import type { PaceSample } from '../domain/stats.ts';
 import { initialRunnerView } from './snapshot.ts';
 
 /** Largest accuracy radius (m) a fix may have to count. 30 exactly is accepted. */
@@ -30,6 +32,10 @@ export type RunnerState = {
   readonly lastReceivedAt: number | null;
   readonly lastPosition: { lat: number; lon: number } | null;
   readonly track: readonly TrackPoint[];
+  /** Sum of the segments between consecutive accepted fixes (sessions and gaps included). */
+  readonly distanceM: number;
+  /** Accepted fixes from the current-pace window start on (older ones are never needed again). */
+  readonly paceSamples: readonly PaceSample[];
   /** Canonical key of the last folded record (ignored ones included), or null before any. */
   readonly lastKey: RunKey | null;
   /** True once the session of `lastKey` has folded its `end`: its later records are ignored. */
@@ -46,6 +52,8 @@ export function initialRunnerState(runnerId: string): RunnerState {
     lastReceivedAt: null,
     lastPosition: null,
     track: [],
+    distanceM: 0,
+    paceSamples: [],
     lastKey: null,
     sessionEnded: false,
   };
@@ -76,6 +84,7 @@ type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 export function applyRecords(state: RunnerState, records: readonly RunRecord[]): RunnerState {
   const next: Mutable<RunnerState> = { ...state };
   const appended: TrackPoint[] = [];
+  const appendedSamples: PaceSample[] = [];
   for (const record of records) {
     const sameSession = next.lastKey !== null && next.lastKey.sessionId === record.sessionId;
     const ended = sameSession && next.sessionEnded;
@@ -100,15 +109,22 @@ export function applyRecords(state: RunnerState, records: readonly RunRecord[]):
     if (next.status === 'notStarted') next.runStartedAt = record.recordedAt;
     next.status = 'active';
     next.runEndedAt = null;
+    if (next.lastPosition !== null) next.distanceM += segmentDistanceM(next.lastPosition, { lat, lon });
     next.lastFixAt = record.recordedAt;
+    appendedSamples.push({ recordedAt: record.recordedAt, distanceM: next.distanceM });
     next.lastPosition = { lat, lon };
     appended.push({ lat, lon, recordedAt: record.recordedAt });
   }
   if (appended.length > 0) next.track = [...state.track, ...appended];
+  if (appendedSamples.length > 0) {
+    const samples = [...state.paceSamples, ...appendedSamples];
+    next.paceSamples = samples.slice(Math.max(0, currentPaceWindowStart(samples)));
+  }
   return next;
 }
 
 export function toRunnerView(state: RunnerState): RunnerView {
+  const elapsedS = state.runStartedAt === null || state.lastFixAt === null ? 0 : (state.lastFixAt - state.runStartedAt) / 1000;
   return {
     ...initialRunnerView(state.runnerId),
     status: state.status,
@@ -117,5 +133,8 @@ export function toRunnerView(state: RunnerState): RunnerView {
     lastFixAt: state.lastFixAt,
     lastReceivedAt: state.lastReceivedAt,
     lastPosition: state.lastPosition === null ? null : { ...state.lastPosition },
+    distanceM: state.distanceM,
+    avgPaceSPerKm: avgPaceSPerKm(elapsedS, state.distanceM),
+    currentPaceSPerKm: state.status === 'stopped' ? null : currentPaceSPerKm(state.paceSamples),
   };
 }
