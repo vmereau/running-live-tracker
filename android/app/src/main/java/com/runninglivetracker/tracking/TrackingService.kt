@@ -29,10 +29,15 @@ import com.runninglivetracker.settings.settingsDataStore
 import com.runninglivetracker.tracking.db.AppDatabase
 import com.runninglivetracker.tracking.db.SessionEntity
 import com.runninglivetracker.tracking.db.TrackingDao
+import com.runninglivetracker.upload.AndroidConnectivitySource
+import com.runninglivetracker.upload.ConnectivitySource
+import com.runninglivetracker.upload.IngestClient
+import com.runninglivetracker.upload.Uploader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -48,6 +53,10 @@ import java.util.concurrent.Executors
  * write, so seq allocation is serialized. [sessionId] is confined to that thread. On Stop,
  * `removeLocationUpdates` is awaited first; every callback already dispatched is then queued on
  * [writer] ahead of `appendEnd`, and the ended-session check in the DAO drops anything later.
+ *
+ * Uploading: an [Uploader] coroutine on Dispatchers.IO drains the outbox while the service lives
+ * (every 10 s, and at once when [connectivity] reports a network). It never touches [writer] or
+ * seq allocation, so recording never waits on the network.
  */
 class TrackingService : Service() {
 
@@ -56,6 +65,10 @@ class TrackingService : Service() {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private lateinit var dao: TrackingDao
     private lateinit var locations: LocationSource
+    private lateinit var connectivity: ConnectivitySource
+
+    /** Fired when a network becomes available; conflated, so a burst means one extra flush. */
+    private val uploadTrigger = Channel<Unit>(Channel.CONFLATED)
 
     /** Active session being recorded. Accessed only on [writer]. */
     private var sessionId: String? = null
@@ -75,6 +88,7 @@ class TrackingService : Service() {
         dao = AppDatabase.get(this).trackingDao()
         locations = locationSourceFactory(this)
         createChannel()
+        startUploader()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -106,7 +120,9 @@ class TrackingService : Service() {
             CoroutineScope(Dispatchers.Main).launch { runCatching { source.remove() } }
         }
         updatesRequested = false
-        scope.cancel()
+        connectivity.unregister()
+        scope.cancel() // stops the uploader
+        uploadTrigger.close()
         writer.shutdown() // queued writes still run
         super.onDestroy()
     }
@@ -175,6 +191,19 @@ class TrackingService : Service() {
     }
 
     // ---- helpers ----
+
+    private fun startUploader() {
+        val settings = SettingsRepository(applicationContext.settingsDataStore)
+        val uploader = Uploader(
+            dao = dao,
+            client = ingestClientFactory(),
+            baseUrl = { settings.settings.first().baseUrl },
+            allowCleartext = BuildConfig.DEBUG,
+        )
+        scope.launch(Dispatchers.IO) { uploader.run(uploadTrigger) }
+        connectivity = connectivitySourceFactory(this)
+        connectivity.register { uploadTrigger.trySend(Unit) }
+    }
 
     /** Runs on [writer]. Reads the settings at this moment and persists a new session, or null if they are invalid. */
     private fun createSession(): SessionEntity? {
@@ -271,6 +300,14 @@ class TrackingService : Service() {
         /** Test seam: JVM tests replace FusedLocation with a fake. */
         @VisibleForTesting
         internal var locationSourceFactory: (Context) -> LocationSource = { FusedLocationSource(it) }
+
+        /** Test seam: JVM tests replace the network callback with a fake. */
+        @VisibleForTesting
+        internal var connectivitySourceFactory: (Context) -> ConnectivitySource = { AndroidConnectivitySource(it) }
+
+        /** Test seam: JVM tests replace the HTTP client (no real network). */
+        @VisibleForTesting
+        internal var ingestClientFactory: () -> IngestClient = { IngestClient() }
 
         fun send(context: Context, action: String) {
             ContextCompat.startForegroundService(context, Intent(context, TrackingService::class.java).setAction(action))

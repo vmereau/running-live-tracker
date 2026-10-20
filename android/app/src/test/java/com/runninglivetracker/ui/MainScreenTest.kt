@@ -20,6 +20,9 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.time.LocalDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -41,10 +44,16 @@ class MainScreenTest {
         fixCount = 12,
     )
 
-    private fun show(session: SessionEntity?, settingsValid: Boolean, permissionsGranted: Boolean) {
+    private fun show(
+        session: SessionEntity?,
+        settingsValid: Boolean,
+        permissionsGranted: Boolean,
+        upload: UploadStatus = UploadStatus(),
+    ) {
         compose.setContent {
             MainScreen(
                 session = session,
+                upload = upload,
                 settingsValid = settingsValid,
                 permissionsGranted = permissionsGranted,
                 onStart = { starts++ },
@@ -108,5 +117,32 @@ class MainScreenTest {
         compose.onNode(hasText(s(R.string.stop)) and hasAnyAncestor(isDialog())).performClick()
         compose.onNodeWithText(s(R.string.stop_confirm_title)).assertDoesNotExist()
         assertEquals(1, stops)
+    }
+
+    // Main-screen contents: pending records, last ack time (local HH:mm:ss) and quarantined count.
+    @Test
+    fun uploadCountersAreShown() {
+        val ackedAt = LocalDateTime.of(2026, 10, 20, 9, 5, 7).atZone(ZoneId.systemDefault()).toInstant().toEpochMilli()
+        show(session = session, settingsValid = true, permissionsGranted = true, upload = UploadStatus(37, ackedAt, 4))
+        compose.onNodeWithText(s(R.string.pending_label)).assertIsDisplayed()
+        compose.onNodeWithText("37").assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.last_ack_label)).assertIsDisplayed()
+        compose.onNodeWithText("09:05:07").assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.quarantined_label)).assertIsDisplayed()
+        compose.onNodeWithText("4").assertIsDisplayed()
+    }
+
+    @Test
+    fun noAckYetShowsADash() {
+        show(session = null, settingsValid = true, permissionsGranted = true)
+        compose.onNodeWithText(s(R.string.last_ack_none)).assertIsDisplayed()
+    }
+
+    @Test
+    fun ackTimeIsLocalHoursMinutesSeconds() {
+        val utc = ZoneOffset.UTC
+        assertEquals("00:00:01", formatAckTime(1_000, utc))
+        assertEquals("08:53:20", formatAckTime(1_760_000_000_000, utc))
+        assertEquals(null, formatAckTime(null, utc))
     }
 }

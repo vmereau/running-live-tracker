@@ -33,6 +33,10 @@
     <string name="stop_confirm_title">Stop tracking?</string>
     <string name="stop_confirm_text">Spectators will stop seeing your position.</string>
     <string name="cancel">Cancel</string>
+    <string name="pending_label">Pending</string>
+    <string name="last_ack_label">Last ack</string>
+    <string name="last_ack_none">—</string>
+    <string name="quarantined_label">Quarantined</string>
 
     <!-- Setup screen -->
     <string name="setup_title">Permissions</string>

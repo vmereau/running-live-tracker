@@ -15,6 +15,12 @@ import com.runninglivetracker.testing.awaitUntil
 import com.runninglivetracker.testing.settle
 import com.runninglivetracker.tracking.db.AppDatabase
 import com.runninglivetracker.tracking.db.SessionEntity
+import com.runninglivetracker.contract.IngestAck
+import com.runninglivetracker.contract.IngestBatch
+import com.runninglivetracker.upload.ConnectivitySource
+import com.runninglivetracker.upload.IngestClient
+import com.runninglivetracker.upload.IngestResult
+import com.runninglivetracker.upload.AndroidConnectivitySource
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -28,6 +34,7 @@ import org.junit.runner.RunWith
 import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
+import org.robolectric.android.controller.ServiceController
 import org.robolectric.annotation.Config
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executor
@@ -73,6 +80,33 @@ class FakeLocationSource : LocationSource {
     }
 }
 
+/** Stands in for the network callback: [fire] simulates connectivity returning. */
+class FakeConnectivitySource : ConnectivitySource {
+    @Volatile var callback: (() -> Unit)? = null
+    @Volatile var unregistered = false
+
+    override fun register(onAvailable: () -> Unit) {
+        callback = onAvailable
+    }
+
+    override fun unregister() {
+        unregistered = true
+    }
+
+    fun fire() = callback!!.invoke()
+}
+
+/** Stands in for the HTTP client: answers with [respond] (Retry by default, so the outbox stays put). */
+class FakeIngestClient : IngestClient() {
+    val batches = java.util.Collections.synchronizedList(mutableListOf<IngestBatch>())
+    @Volatile var respond: (IngestBatch) -> IngestResult = { IngestResult.Retry("offline") }
+
+    override fun send(baseUrl: String, runnerKey: String, batch: IngestBatch): IngestResult {
+        batches += batch
+        return respond(batch)
+    }
+}
+
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class TrackingServiceTest {
@@ -80,7 +114,11 @@ class TrackingServiceTest {
     private val app: Application = ApplicationProvider.getApplicationContext()
     private lateinit var db: AppDatabase
     private val fake = FakeLocationSource()
+    private val connectivity = FakeConnectivitySource()
+    private val ingest = FakeIngestClient()
     private val key = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJ0123-_6"
+    /** Every service built by [createService], destroyed in [tearDown] so no uploader outlives its test. */
+    private val controllers = mutableListOf<ServiceController<TrackingService>>()
     private val uuidV4 = Regex("^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$")
 
     @Before
@@ -88,6 +126,8 @@ class TrackingServiceTest {
         db = Room.inMemoryDatabaseBuilder(app, AppDatabase::class.java).allowMainThreadQueries().build()
         AppDatabase.setInstanceForTest(db)
         TrackingService.locationSourceFactory = { fake }
+        TrackingService.connectivitySourceFactory = { connectivity }
+        TrackingService.ingestClientFactory = { ingest }
         shadowOf(app).grantPermissions(
             Manifest.permission.ACCESS_FINE_LOCATION,
             Manifest.permission.ACCESS_COARSE_LOCATION,
@@ -99,6 +139,10 @@ class TrackingServiceTest {
     @After
     fun tearDown() {
         TrackingService.locationSourceFactory = { FusedLocationSource(it) }
+        TrackingService.connectivitySourceFactory = { AndroidConnectivitySource(it) }
+        TrackingService.ingestClientFactory = { IngestClient() }
+        release.countDown()
+        controllers.forEach { it.destroy() }
         AppDatabase.setInstanceForTest(null)
         db.close()
     }
@@ -114,7 +158,8 @@ class TrackingServiceTest {
 
     private fun command(action: String?) = action?.let { Intent(app, TrackingService::class.java).setAction(it) }
 
-    private fun createService(): TrackingService = Robolectric.buildService(TrackingService::class.java).create().get()
+    private fun createService(): TrackingService =
+        Robolectric.buildService(TrackingService::class.java).create().also { controllers += it }.get()
 
     private fun startedSession(): TrackingService {
         runBlocking { SettingsRepository(app.settingsDataStore).save(Settings("https://pc.tail1234.ts.net", key)) }
@@ -313,5 +358,72 @@ class TrackingServiceTest {
         settle(100)
         assertNull(dao.activeSession())
         assertEquals(0, fake.requests)
+    }
+
+    // ---- uploader (Story 2.3) ----
+
+    private val release = CountDownLatch(1)
+
+    private fun ackAll(): (IngestBatch) -> IngestResult =
+        { IngestResult.Acked(IngestAck(it.sessionId, it.records.last().seq, 1_760_000_000_000)) }
+
+    // The service owns the uploader: recorded fixes are sent and acked rows leave the outbox.
+    @Test
+    fun uploaderDrainsTheOutboxWhileTracking() {
+        ingest.respond = ackAll()
+        startedSession()
+        val id = dao.activeSession()!!.sessionId
+        fake.deliver(location(0), location(1))
+        connectivity.fire() // flush now instead of waiting for the 10 s tick
+        awaitUntil(message = "outbox drained") { dao.outbox(id).isEmpty() && ingest.batches.isNotEmpty() }
+        assertEquals(key, dao.session(id)!!.runnerKey)
+        assertNotNull(dao.session(id)!!.lastAckedAt)
+        assertEquals(listOf(0L, 1L), ingest.batches.flatMap { b -> b.records.map { it.seq } }.distinct())
+        assertEquals(2L, dao.session(id)!!.fixCount)
+    }
+
+    // Acceptance: a fix written while uploads fail (here: hang) gets the next seq without waiting on HTTP.
+    @Test
+    fun recordingNeverWaitsOnAStuckUpload() {
+        val inFlight = CountDownLatch(1)
+        ingest.respond = {
+            inFlight.countDown()
+            release.await(30, TimeUnit.SECONDS)
+            IngestResult.Retry("timeout")
+        }
+        startedSession()
+        val id = dao.activeSession()!!.sessionId
+        fake.deliver(location(0))
+        connectivity.fire()
+        assertTrue("upload started", inFlight.await(5, TimeUnit.SECONDS))
+
+        fake.deliver(location(1))
+        fake.deliver(location(2))
+        assertEquals(listOf(0L, 1L, 2L), dao.outbox(id).map { it.seq })
+        assertEquals(3L, dao.session(id)!!.nextSeq)
+        release.countDown()
+    }
+
+    // The loop survives an unexpected exception from a flush (caught in Uploader.run) and drains later.
+    @Test
+    fun uploaderSurvivesAnExceptionAndDrainsAfterwards() {
+        val ack = ackAll()
+        ingest.respond = { if (ingest.batches.size == 1) throw RuntimeException("boom") else ack(it) }
+        startedSession()
+        val id = dao.activeSession()!!.sessionId
+        fake.deliver(location(0), location(1))
+        connectivity.fire()
+        awaitUntil(message = "outbox drained after the exception") { dao.outbox(id).isEmpty() }
+        assertTrue(ingest.batches.size >= 2)
+        assertNotNull(dao.session(id)!!.lastAckedAt)
+    }
+
+    @Test
+    fun connectivityCallbackIsUnregisteredOnDestroy() {
+        val controller = Robolectric.buildService(TrackingService::class.java).create()
+        assertNotNull(connectivity.callback)
+        assertFalse(connectivity.unregistered)
+        controller.destroy()
+        assertTrue(connectivity.unregistered)
     }
 }

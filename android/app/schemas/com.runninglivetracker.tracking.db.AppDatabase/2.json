@@ -1,0 +1,206 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 2,
+    "identityHash": "e04e93772071420c6b9d0621b9576cb6",
+    "entities": [
+      {
+        "tableName": "sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `sessionStartedAt` INTEGER NOT NULL, `runnerKey` TEXT NOT NULL, `nextSeq` INTEGER NOT NULL, `fixCount` INTEGER NOT NULL, `endedAt` INTEGER, `lastAckedAt` INTEGER, PRIMARY KEY(`sessionId`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionStartedAt",
+            "columnName": "sessionStartedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runnerKey",
+            "columnName": "runnerKey",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextSeq",
+            "columnName": "nextSeq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fixCount",
+            "columnName": "fixCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAt",
+            "columnName": "endedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "lastAckedAt",
+            "columnName": "lastAckedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId"
+          ]
+        }
+      },
+      {
+        "tableName": "outbox",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `seq` INTEGER NOT NULL, `kind` TEXT NOT NULL, `recordedAt` INTEGER NOT NULL, `lat` REAL, `lon` REAL, `accuracyM` REAL, `altitudeM` REAL, `speedMps` REAL, PRIMARY KEY(`sessionId`, `seq`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seq",
+            "columnName": "seq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordedAt",
+            "columnName": "recordedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lon",
+            "columnName": "lon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "accuracyM",
+            "columnName": "accuracyM",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "altitudeM",
+            "columnName": "altitudeM",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedMps",
+            "columnName": "speedMps",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "seq"
+          ]
+        }
+      },
+      {
+        "tableName": "quarantine",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sessionId` TEXT NOT NULL, `seq` INTEGER NOT NULL, `kind` TEXT NOT NULL, `recordedAt` INTEGER NOT NULL, `lat` REAL, `lon` REAL, `accuracyM` REAL, `altitudeM` REAL, `speedMps` REAL, `httpStatus` INTEGER NOT NULL, `errorCode` TEXT, `quarantinedAt` INTEGER NOT NULL, PRIMARY KEY(`sessionId`, `seq`))",
+        "fields": [
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "seq",
+            "columnName": "seq",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "recordedAt",
+            "columnName": "recordedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lat",
+            "columnName": "lat",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "lon",
+            "columnName": "lon",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "accuracyM",
+            "columnName": "accuracyM",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "altitudeM",
+            "columnName": "altitudeM",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "speedMps",
+            "columnName": "speedMps",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "httpStatus",
+            "columnName": "httpStatus",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "errorCode",
+            "columnName": "errorCode",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "quarantinedAt",
+            "columnName": "quarantinedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sessionId",
+            "seq"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'e04e93772071420c6b9d0621b9576cb6')"
+    ]
+  }
+}

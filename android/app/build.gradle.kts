@@ -76,8 +76,11 @@ ksp {
 
 // JVM contract tests read the shared fixtures straight from the repo (shared/fixtures).
 val fixturesDir = rootProject.layout.projectDirectory.dir("../shared/fixtures").asFile.canonicalPath
+// MigrationTest builds a v1 database from the committed schema JSON.
+val roomSchemasDir = layout.projectDirectory.dir("schemas").asFile.canonicalPath
 tasks.withType<Test>().configureEach {
     systemProperty("fixturesDir", fixturesDir)
+    systemProperty("roomSchemasDir", roomSchemasDir)
     inputs.dir(fixturesDir).withPropertyName("fixturesDir").withPathSensitivity(PathSensitivity.RELATIVE)
 }
 
@@ -98,6 +101,7 @@ dependencies {
 
     testImplementation(libs.junit)
     testImplementation(libs.okhttp.mockwebserver)
+    testImplementation(libs.kotlinx.coroutines.test)
     testImplementation(libs.robolectric)
     testImplementation(libs.androidx.test.core)
     testImplementation(platform(libs.compose.bom))

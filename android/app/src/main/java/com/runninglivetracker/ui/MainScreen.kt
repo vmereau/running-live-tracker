@@ -30,6 +30,9 @@ import androidx.compose.ui.unit.dp
 import com.runninglivetracker.R
 import com.runninglivetracker.tracking.db.SessionEntity
 import kotlinx.coroutines.delay
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /** `H:MM:SS` from a duration in ms (negative clamps to 0). */
@@ -38,13 +41,24 @@ fun formatElapsed(ms: Long): String {
     return String.format(Locale.ROOT, "%d:%02d:%02d", total / 3600, (total / 60) % 60, total % 60)
 }
 
+private val ACK_TIME: DateTimeFormatter = DateTimeFormatter.ofPattern("HH:mm:ss", Locale.ROOT)
+
+/** Local `HH:mm:ss` of an epoch-ms time, or null when there is none. */
+fun formatAckTime(epochMs: Long?, zone: ZoneId = ZoneId.systemDefault()): String? =
+    epochMs?.let { ACK_TIME.format(Instant.ofEpochMilli(it).atZone(zone)) }
+
+/** Upload counters shown on the main screen, all observed from Room. */
+data class UploadStatus(val pending: Long = 0, val lastAckedAt: Long? = null, val quarantined: Long = 0)
+
 /**
- * Tracking state, elapsed time since Start and recorded fix count, read from Room (not from the
- * service). No race stats by design.
+ * Tracking state, elapsed time since Start, recorded fix count and upload status (pending
+ * records, last ack time, quarantined records), read from Room (not from the service). No race
+ * stats by design.
  */
 @Composable
 fun MainScreen(
     session: SessionEntity?,
+    upload: UploadStatus,
     settingsValid: Boolean,
     permissionsGranted: Boolean,
     onStart: () -> Unit,
@@ -81,6 +95,15 @@ fun MainScreen(
         Text(stringResource(R.string.fix_count_label), style = MaterialTheme.typography.labelLarge)
         Text((session?.fixCount ?: 0).toString(), style = MaterialTheme.typography.displaySmall)
 
+        Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+            Counter(stringResource(R.string.pending_label), upload.pending.toString())
+            Counter(
+                stringResource(R.string.last_ack_label),
+                formatAckTime(upload.lastAckedAt) ?: stringResource(R.string.last_ack_none),
+            )
+            Counter(stringResource(R.string.quarantined_label), upload.quarantined.toString())
+        }
+
         if (session == null) {
             Button(
                 onClick = onStart,
@@ -115,5 +138,13 @@ fun MainScreen(
                 TextButton(onClick = { confirmStop = false }) { Text(stringResource(R.string.cancel)) }
             },
         )
+    }
+}
+
+@Composable
+private fun Counter(label: String, value: String) {
+    Column {
+        Text(label, style = MaterialTheme.typography.labelLarge)
+        Text(value, style = MaterialTheme.typography.titleLarge)
     }
 }

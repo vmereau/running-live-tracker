@@ -27,6 +27,7 @@ import com.runninglivetracker.tracking.db.AppDatabase
 import com.runninglivetracker.ui.MainScreen
 import com.runninglivetracker.ui.SettingsScreen
 import com.runninglivetracker.ui.SetupScreen
+import com.runninglivetracker.ui.UploadStatus
 import com.runninglivetracker.ui.permissionState
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -62,12 +63,17 @@ class MainActivity : ComponentActivity() {
         // Cleartext (http://localhost, http://10.0.2.2) is a debug-only convenience.
         val allowCleartext = BuildConfig.DEBUG
         val activeSession = dao.observeActiveSession()
-
+        val pendingCount = dao.observePendingCount()
+        val quarantineCount = dao.observeQuarantineCount()
+        val lastAckedAt = dao.observeLastAckedAt()
 
         setContent {
             MaterialTheme {
                 Surface {
                     val session by activeSession.collectAsStateWithLifecycle(initialValue = null)
+                    val pending by pendingCount.collectAsStateWithLifecycle(initialValue = 0L)
+                    val quarantined by quarantineCount.collectAsStateWithLifecycle(initialValue = 0L)
+                    val lastAck by lastAckedAt.collectAsStateWithLifecycle(initialValue = null)
                     val settings by repository.settings.collectAsStateWithLifecycle(initialValue = Settings("", ""))
                     var permissions by remember { mutableStateOf(permissionState()) }
                     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { permissions = permissionState() }
@@ -80,6 +86,7 @@ class MainActivity : ComponentActivity() {
                     when (screen) {
                         Screen.Main -> MainScreen(
                             session = session,
+                            upload = UploadStatus(pending = pending, lastAckedAt = lastAck, quarantined = quarantined),
                             settingsValid = settingsValid,
                             permissionsGranted = permissions.allGranted,
                             onStart = { TrackingService.send(this, TrackingService.ACTION_START) },

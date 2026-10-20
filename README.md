@@ -147,7 +147,7 @@ DataStore Preferences 1.2.1, compileSdk / targetSdk / minSdk 37 / 36 / 29, Gradl
 the wrapper, JDK 17 toolchain.
 
 The app has three screens: the main screen (tracking state, elapsed time since Start, count of
-recorded fixes, Start / Stop), a Permissions setup screen and Settings. Settings hold the server
+recorded fixes, pending records, time of the last ack, quarantined records, Start / Stop), a Permissions setup screen and Settings. Settings hold the server
 URL and the runner key (from `pnpm keygen`), saved in DataStore, plus a "Test connection" button
 that calls `GET /api/v1/health`. Rules:
 
@@ -167,7 +167,21 @@ records keyed by `(sessionId, seq)`. Fixes without accuracy or with out-of-range
 dropped before the insert. Stop (behind a confirmation dialog; the notification has no Stop
 action) removes location updates, writes the queued fixes, then an `end` record with the next
 seq. The service is `START_STICKY` and resumes the same session after the OS kills it; opening
-the app with an active session also resumes it. Uploading the outbox comes with Story 2.3.
+the app with an active session also resumes it.
+
+Uploading: while the service runs, an uploader coroutine drains the outbox to
+`POST /api/v1/ingest`, every 10 s and at once when a network becomes available
+(`ConnectivityManager` default-network callback). It always sends the oldest session first, from
+its lowest remaining seq, at most 200 records of one session per batch, with
+`Authorization: Bearer <the key captured at that session's Start>`; the server URL is re-read from
+the settings at each flush. On `200` it deletes `seq <= ackedThroughSeq` for that session and
+records the ack time. `400` / `409` / `413` are final: the batch moves to a local `quarantine`
+table and the flush continues. Network errors, `5xx`, `401`, `429`, any other status, a `200` that
+is not a valid ack for the batch, or an invalid server URL keep the rows and retry after 1 s, 2 s,
+4 s … up to 60 s (a success or a reconnect resets it). Recording never waits on the network:
+fixes keep getting their seq while offline and are sent in order once the network returns. The
+database is at schema v2 (`lastAckedAt` + `quarantine`), auto-migrated from v1 with no data loss.
+Finishing uploads after Stop comes with Story 2.4.
 
 Start stays disabled until the settings are valid and the Permissions screen shows every item
 granted:
@@ -222,6 +236,16 @@ adb shell "run-as com.runninglivetracker sqlite3 databases/tracking.db 'SELECT s
 The seq values are contiguous from 0 for each session and the last row is `end`. If the phone
 has no `sqlite3`, copy the database out (`adb exec-out run-as com.runninglivetracker cat
 databases/tracking.db > tracking.db`, plus the `-wal` file) and open it locally.
+
+Manual offline check (airplane mode) on a real phone against the server, with the live map open
+in a browser:
+
+1. Press Start and wait until Pending stays near 0 and Last ack updates every ~10 s.
+2. Turn airplane mode on for 2 minutes (GPS keeps working): Pending grows by about 12 a minute,
+   Last ack stops, and on the web page the runner's last-update age keeps growing.
+3. Turn airplane mode off: within seconds Pending drops back to 0, Last ack jumps to now, and the
+   gap in the track fills in on the map. Quarantined stays 0.
+4. On the server, the positions are stored under the right runner.
 
 ## Public access
 

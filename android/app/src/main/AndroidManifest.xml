@@ -2,6 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Uploader: flush at once when a network becomes available. -->
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Tracking (TrackingService). All are granted on the setup screen before the first Start. -->
     <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
