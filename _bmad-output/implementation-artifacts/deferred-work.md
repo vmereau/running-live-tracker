@@ -10,3 +10,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-2-3-uploading-positions-with-acks-retries-and-offline-buffering.md`
   summary: Strict oldest-session-first uploading lets a session stuck on a persistent retry (e.g. 401 after its key was revoked or rotated) block every newer session, including the live one, with no indication on screen.
   evidence: `Uploader.flush` returns on the first Retry and always restarts at `nextUploadSession()` (oldest with rows). Needs rows stranded in an older session plus a server-side key change; decide a skip/cap policy and an "auth failing" indicator with Story 2.4 draining.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-4-finishing-uploads-after-stop.md`
+  summary: On Android 14 and below, draining after Stop never ends when uploads are stuck on a retry (401 after a key change, invalid or cleared server URL), leaving a permanent foreground notification and a flush every 60 s.
+  evidence: `onTimeout` (the only exit besides an empty outbox) runs on API 35+ only and minSdk is 29. The 2.4 decision kept strict draining "until the outbox is empty or the OS timeout". Needs a cap (time or attempts) or a skip policy, decided together with the 2.3 oldest-first deferred item.

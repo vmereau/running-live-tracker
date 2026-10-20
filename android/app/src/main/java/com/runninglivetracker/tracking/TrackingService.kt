@@ -35,6 +35,7 @@ import com.runninglivetracker.upload.IngestClient
 import com.runninglivetracker.upload.Uploader
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.channels.Channel
@@ -47,7 +48,8 @@ import java.util.concurrent.Executors
 
 /**
  * The only writer of sessions and outbox rows. Commands: [ACTION_START], [ACTION_STOP],
- * [ACTION_RESUME]; a null intent is a `START_STICKY` restart and resumes like [ACTION_RESUME].
+ * [ACTION_RESUME], [ACTION_DRAIN]; a null intent is a `START_STICKY` restart and resumes like
+ * [ACTION_RESUME].
  *
  * Threading: one single-thread [writer] receives the FusedLocation callbacks and runs every DB
  * write, so seq allocation is serialized. [sessionId] is confined to that thread. On Stop,
@@ -57,6 +59,11 @@ import java.util.concurrent.Executors
  * Uploading: an [Uploader] coroutine on Dispatchers.IO drains the outbox while the service lives
  * (every 10 s, and at once when [connectivity] reports a network). It never touches [writer] or
  * seq allocation, so recording never waits on the network.
+ *
+ * Draining: with no active session and a non-empty outbox (after Stop, on a sticky restart, or on
+ * [ACTION_DRAIN] from the app), the service stays foreground as `dataSync` with "Uploading N
+ * pending" and stops itself once the outbox is empty. Draining is derived from Room, never
+ * persisted. A Start cancels it; the OS `dataSync` timeout ([onTimeout]) ends it with rows kept.
  */
 class TrackingService : Service() {
 
@@ -76,6 +83,11 @@ class TrackingService : Service() {
     /** Accessed only on the main thread. */
     private var updatesRequested = false
     private var stopping = false
+    private var draining = false
+    private var drainJob: Job? = null
+    private var foregroundType = 0
+    private var notificationTitle = 0
+    private var notificationText = ""
 
     /** Delivered on [writer] (see [requestUpdates]). */
     private fun onLocations(batch: List<Location>) {
@@ -88,15 +100,21 @@ class TrackingService : Service() {
         dao = AppDatabase.get(this).trackingDao()
         locations = locationSourceFactory(this)
         createChannel()
+        showTrackingText()
         startUploader()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val action = intent?.action
+        if (action == ACTION_START) cancelDraining()
         // Every command arrives through startForegroundService: go foreground right away. Stop uses
-        // dataSync so it can still write `end` if the location permission was revoked.
-        val type = if (intent?.action == ACTION_STOP) {
+        // dataSync so it can still write `end` if the location permission was revoked. Drain (or
+        // any non-Start command while draining) uses dataSync too, unless location updates run.
+        val dataSync = action == ACTION_STOP ||
+            (action != ACTION_START && !updatesRequested && (action == ACTION_DRAIN || draining))
+        val type = if (dataSync) {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC
         } else {
             ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
@@ -105,10 +123,10 @@ class TrackingService : Service() {
             stopSelf(startId)
             return START_NOT_STICKY
         }
-        when (intent?.action) {
+        when (action) {
             ACTION_START -> start(startId)
             ACTION_STOP -> stop()
-            else -> resume(startId) // ACTION_RESUME or a sticky restart (null intent)
+            else -> resume(startId) // ACTION_RESUME, ACTION_DRAIN or a sticky restart (null intent)
         }
         return START_STICKY
     }
@@ -120,6 +138,7 @@ class TrackingService : Service() {
             CoroutineScope(Dispatchers.Main).launch { runCatching { source.remove() } }
         }
         updatesRequested = false
+        draining = false
         connectivity.unregister()
         scope.cancel() // stops the uploader
         uploadTrigger.close()
@@ -149,13 +168,28 @@ class TrackingService : Service() {
         writer.execute {
             val session = dao.activeSession()
             if (session == null) {
-                Log.i(TAG, "Resume: no active session")
-                mainHandler.post { if (!stopping && stopSelfResult(startId)) leaveForeground() }
+                val pending = dao.pendingCount()
+                Log.i(TAG, "Resume: no active session, $pending pending")
+                mainHandler.post {
+                    when {
+                        stopping -> Unit // Stop decides between draining and stopping
+                        draining -> uploadTrigger.trySend(Unit)
+                        pending > 0 -> startDraining(pending)
+                        stopSelfResult(startId) -> leaveForeground()
+                    }
+                }
                 return@execute
             }
             sessionId = session.sessionId
             Log.i(TAG, "Resume: session ${session.sessionId} at seq ${session.nextSeq}")
-            mainHandler.post { if (!stopping) requestUpdates() }
+            mainHandler.post {
+                if (stopping) return@post
+                // A Drain on a fresh service went foreground as dataSync: tracking needs location.
+                if (foregroundType != ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION) {
+                    enterForeground(ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+                }
+                requestUpdates()
+            }
         }
     }
 
@@ -177,17 +211,80 @@ class TrackingService : Service() {
                     Log.i(TAG, "Stop: session $id ended at seq $seq")
                 }
                 sessionId = null
+                val pending = dao.pendingCount()
                 mainHandler.post {
                     // A Resume during Stop has a newer startId, so stopSelfResult(startId) would
                     // leave the service foreground forever. Only a Start since then keeps it alive.
                     if (stopping) {
                         stopping = false
-                        leaveForeground()
-                        stopSelf()
+                        if (pending > 0) {
+                            startDraining(pending)
+                        } else {
+                            leaveForeground()
+                            stopSelf()
+                        }
                     }
                 }
             }
         }
+    }
+
+    // ---- draining (main thread) ----
+
+    /** No active session and rows pending: stay foreground as dataSync until the outbox is empty. */
+    private fun startDraining(pending: Long) {
+        if (draining) {
+            uploadTrigger.trySend(Unit)
+            return
+        }
+        draining = true
+        Log.i(TAG, "Draining: uploading pending records")
+        setDrainingText(pending) // before going foreground: never show the tracking text after Stop
+        if (!enterForeground(ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)) {
+            draining = false
+            leaveForeground()
+            stopSelf()
+            return
+        }
+        uploadTrigger.trySend(Unit) // flush now, not at the next tick
+        drainJob = scope.launch {
+            dao.observePendingCount().collect { pending ->
+                // Re-checked on the main thread: a Start since then has cancelled the drain.
+                if (!draining) return@collect
+                if (pending == 0L) {
+                    Log.i(TAG, "Draining: outbox empty, stopping")
+                    finishDraining()
+                } else {
+                    showDrainingText(pending)
+                }
+            }
+        }
+    }
+
+    private fun finishDraining() {
+        cancelDraining()
+        leaveForeground()
+        stopSelf()
+    }
+
+    private fun cancelDraining() {
+        if (!draining && drainJob == null) return
+        draining = false
+        drainJob?.cancel()
+        drainJob = null
+        showTrackingText()
+    }
+
+    /**
+     * Android 15+ caps dataSync (6 h per 24 h). Must stop within seconds: leave the foreground and
+     * stop, keeping the outbox; the next app launch drains again. Only called from API 35, so no
+     * super call (the base method does nothing and is missing on older platforms).
+     */
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        Log.w(TAG, "Foreground service timeout (type $fgsType): stopping, pending rows kept")
+        cancelDraining()
+        leaveForeground()
+        stopSelf()
     }
 
     // ---- helpers ----
@@ -252,6 +349,7 @@ class TrackingService : Service() {
 
     private fun enterForeground(type: Int): Boolean = try {
         ServiceCompat.startForeground(this, NOTIFICATION_ID, buildNotification(), type)
+        foregroundType = type
         true
     } catch (e: RuntimeException) {
         // SecurityException (permission missing) or ForegroundServiceStartNotAllowedException.
@@ -261,6 +359,25 @@ class TrackingService : Service() {
 
     private fun leaveForeground() {
         ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        foregroundType = 0
+    }
+
+    private fun showTrackingText() {
+        notificationTitle = R.string.tracking_notification_title
+        notificationText = getString(R.string.tracking_notification_text)
+    }
+
+    private fun setDrainingText(pending: Long) {
+        notificationTitle = R.string.draining_notification_title
+        notificationText = getString(R.string.draining_notification_text, pending)
+    }
+
+    /** "Uploading N pending": updates the foreground notification in place (same id, no re-alert). */
+    private fun showDrainingText(pending: Long) {
+        setDrainingText(pending)
+        if (foregroundType != 0) {
+            getSystemService(NotificationManager::class.java).notify(NOTIFICATION_ID, buildNotification())
+        }
     }
 
     private fun createChannel() {
@@ -278,8 +395,8 @@ class TrackingService : Service() {
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle(getString(R.string.tracking_notification_title))
-            .setContentText(getString(R.string.tracking_notification_text))
+            .setContentTitle(getString(notificationTitle))
+            .setContentText(notificationText)
             .setContentIntent(open)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
@@ -293,6 +410,9 @@ class TrackingService : Service() {
         const val ACTION_START = "com.runninglivetracker.action.START"
         const val ACTION_STOP = "com.runninglivetracker.action.STOP"
         const val ACTION_RESUME = "com.runninglivetracker.action.RESUME"
+
+        /** Finish uploading the outbox when no session is active (sent by the app on launch). */
+        const val ACTION_DRAIN = "com.runninglivetracker.action.DRAIN"
         private const val CHANNEL_ID = "tracking"
         private const val NOTIFICATION_ID = 1
         private const val INTERVAL_MS = 5_000L

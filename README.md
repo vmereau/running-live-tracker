@@ -181,7 +181,19 @@ is not a valid ack for the batch, or an invalid server URL keep the rows and ret
 4 s … up to 60 s (a success or a reconnect resets it). Recording never waits on the network:
 fixes keep getting their seq while offline and are sent in order once the network returns. The
 database is at schema v2 (`lastAckedAt` + `quarantine`), auto-migrated from v1 with no data loss.
-Finishing uploads after Stop comes with Story 2.4.
+
+Finishing uploads after Stop: if the outbox still has rows once `end` is written, the service stays
+in the foreground (type `dataSync`) with the notification "Uploading N pending", N counting down
+as acks arrive, and stops itself (removing the notification) when the outbox is empty. The same
+uploader policy applies (oldest session first, same retries and quarantine), with an immediate
+flush when draining starts; a session stuck on a retry (e.g. `401`) keeps it draining. The main
+screen headline reads "Uploading" while records are pending and no session is active. Draining is
+not stored: it is derived from Room ("no active session and a non-empty outbox"), so a sticky
+restart drains too, and opening the app in that state sends a Drain command (no location
+permission needed). A Start while draining goes back to tracking (type `location`); the old
+session's rows are still sent first. On Android 15+ `dataSync` is capped at 6 h per 24 h: on that
+timeout the service stops and keeps the rows; draining resumes on a later app launch, once Android
+allows `dataSync` again (until the quota frees up, going foreground fails and the service just stops).
 
 Start stays disabled until the settings are valid and the Permissions screen shows every item
 granted:
@@ -246,6 +258,13 @@ in a browser:
 3. Turn airplane mode off: within seconds Pending drops back to 0, Last ack jumps to now, and the
    gap in the track fills in on the map. Quarantined stays 0.
 4. On the server, the positions are stored under the right runner.
+
+Manual check of finishing uploads after Stop (real phone, live map open):
+
+1. Press Start, turn airplane mode on, record about 1 minute, then press Stop and confirm.
+2. The notification shows "Uploading N pending" and the main screen headline reads "Uploading".
+3. Swipe the app away from recents, then turn airplane mode off.
+4. N drops to 0, the notification disappears, and on the web page the track fills in to the end.
 
 ## Public access
 

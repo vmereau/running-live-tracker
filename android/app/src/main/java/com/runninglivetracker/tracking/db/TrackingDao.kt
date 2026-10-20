@@ -125,6 +125,10 @@ abstract class TrackingDao {
     @Query("SELECT COUNT(*) FROM outbox")
     abstract fun observePendingCount(): Flow<Long>
 
+    /** Blocking: outbox rows not yet acked (any session). Decides between draining and stopping. */
+    @Query("SELECT COUNT(*) FROM outbox")
+    abstract fun pendingCount(): Long
+
     @Query("SELECT COUNT(*) FROM quarantine")
     abstract fun observeQuarantineCount(): Flow<Long>
 

@@ -132,6 +132,31 @@ class MainScreenTest {
         compose.onNodeWithText("4").assertIsDisplayed()
     }
 
+    // Draining after Stop: no session, records pending -> "Uploading" with the counters still shown.
+    @Test
+    fun noSessionWithPendingRecordsShowsUploading() {
+        show(session = null, settingsValid = true, permissionsGranted = true, upload = UploadStatus(7, null, 2))
+        compose.onNodeWithText(s(R.string.state_uploading)).assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.state_stopped)).assertDoesNotExist()
+        compose.onNodeWithText("7").assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.last_ack_none)).assertIsDisplayed()
+        compose.onNodeWithText("2").assertIsDisplayed()
+    }
+
+    @Test
+    fun activeSessionWithPendingRecordsStillShowsTracking() {
+        show(session = session, settingsValid = true, permissionsGranted = true, upload = UploadStatus(7, null, 0))
+        compose.onNodeWithText(s(R.string.state_tracking)).assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.state_uploading)).assertDoesNotExist()
+    }
+
+    @Test
+    fun noSessionAndNothingPendingShowsStopped() {
+        show(session = null, settingsValid = true, permissionsGranted = true, upload = UploadStatus(0, null, 0))
+        compose.onNodeWithText(s(R.string.state_stopped)).assertIsDisplayed()
+        compose.onNodeWithText(s(R.string.state_uploading)).assertDoesNotExist()
+    }
+
     @Test
     fun noAckYetShowsADash() {
         show(session = null, settingsValid = true, permissionsGranted = true)

@@ -129,6 +129,32 @@ class MainActivityTest {
         assertResumeSent()
     }
 
+    // Matrix "App launch": no active session, outbox has rows -> Drain (no permission needed).
+    @Test
+    fun openingTheAppWithPendingRowsAndNoSessionSendsDrain() {
+        val id = "1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b"
+        val dao = db.trackingDao()
+        dao.insertSession(SessionEntity(sessionId = id, sessionStartedAt = 900, runnerKey = key))
+        dao.appendFix(id, ValidFix(1_000L, 48.0, 2.0, 4.0))
+        dao.appendEnd(id, recordedAt = 5_000)
+        Robolectric.buildActivity(MainActivity::class.java).setup()
+
+        awaitUntil(message = "a started service") { shadowOf(app).peekNextStartedService() != null }
+        val intent = shadowOf(app).nextStartedService
+        assertEquals(TrackingService::class.java.name, intent.component?.className)
+        assertEquals(TrackingService.ACTION_DRAIN, intent.action)
+    }
+
+    // An active session with rows pending is resumed (tracking), not drained.
+    @Test
+    fun activeSessionWithPendingRowsSendsResumeNotDrain() {
+        grantEverything()
+        activeSession()
+        db.trackingDao().appendFix("1b4e28ba-2fa1-4d3b-a3f5-ef19b5a7633b", ValidFix(1_000L, 48.0, 2.0, 4.0))
+        Robolectric.buildActivity(MainActivity::class.java).setup()
+        assertResumeSent()
+    }
+
     // The Room flows reach the right counters: 3 pending, 1 quarantined, the last ack time.
     @Test
     fun uploadCountersShowTheRoomValues() {

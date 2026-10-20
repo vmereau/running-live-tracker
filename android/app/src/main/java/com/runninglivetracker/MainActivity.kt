@@ -41,15 +41,18 @@ class MainActivity : ComponentActivity() {
      * On every resume (fresh launch, reopened from recents after process death, back from a
      * permission page): a session is active but the service may have died, so ask it to resume.
      * Only location is needed to record; Start still requires every permission. Resume is
-     * idempotent in the service.
+     * idempotent in the service. With no active session but records still pending (the service
+     * died or timed out while draining), ask it to drain: no location permission is needed.
      */
     override fun onResume() {
         super.onResume()
         val dao = AppDatabase.get(this).trackingDao()
         lifecycleScope.launch {
-            val active = withContext(Dispatchers.IO) { dao.activeSession() }
-            if (active != null && permissionState().location) {
-                TrackingService.send(this@MainActivity, TrackingService.ACTION_RESUME)
+            val (active, pending) = withContext(Dispatchers.IO) { dao.activeSession() to dao.pendingCount() }
+            if (active != null) {
+                if (permissionState().location) TrackingService.send(this@MainActivity, TrackingService.ACTION_RESUME)
+            } else if (pending > 0) {
+                TrackingService.send(this@MainActivity, TrackingService.ACTION_DRAIN)
             }
         }
     }

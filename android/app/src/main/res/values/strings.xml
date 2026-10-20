@@ -17,10 +17,13 @@
     <string name="tracking_channel_name">Tracking</string>
     <string name="tracking_notification_title">Tracking your run</string>
     <string name="tracking_notification_text">Recording a GPS position every 5 seconds</string>
+    <string name="draining_notification_title">Run stopped</string>
+    <string name="draining_notification_text">Uploading %d pending</string>
 
     <!-- Main screen -->
     <string name="state_tracking">Tracking</string>
     <string name="state_stopped">Stopped</string>
+    <string name="state_uploading">Uploading</string>
     <string name="elapsed_label">Elapsed</string>
     <string name="fix_count_label">Recorded fixes</string>
     <string name="start">Start</string>

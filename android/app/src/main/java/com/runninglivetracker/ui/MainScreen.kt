@@ -84,7 +84,13 @@ fun MainScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
         Text(
-            stringResource(if (session != null) R.string.state_tracking else R.string.state_stopped),
+            stringResource(
+                when {
+                    session != null -> R.string.state_tracking
+                    upload.pending > 0 -> R.string.state_uploading // draining after Stop
+                    else -> R.string.state_stopped
+                },
+            ),
             style = MaterialTheme.typography.headlineMedium,
         )
         Text(stringResource(R.string.elapsed_label), style = MaterialTheme.typography.labelLarge)
