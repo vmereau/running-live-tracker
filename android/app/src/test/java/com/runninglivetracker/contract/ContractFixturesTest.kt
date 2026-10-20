@@ -34,7 +34,7 @@ class ContractFixturesTest {
     )
 
     /** Server -> web payloads; the phone never reads them. */
-    private val readSide = setOf("event-info", "track-point", "runner-view", "snapshot", "runner-event", "track-event")
+    private val readSide = setOf("event-info", "track-point", "runner-view", "snapshot", "runner-event", "track-event", "course-geo-json")
 
     private fun fixtures(kind: String): List<Pair<File, String>> {
         val files = File(fixturesDir, kind).listFiles { f -> f.name.endsWith(".json") }

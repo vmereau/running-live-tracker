@@ -36,6 +36,23 @@ Create your event config from the example (the real one is git-ignored because i
 cp config/event.example.json config/event.json
 ```
 
+### Course (optional)
+
+To show the event's course on the map, add `"coursePath"` to `config/event.json`:
+
+```json
+"coursePath": "courses/race.gpx"
+```
+
+A relative path is resolved from the folder that holds `event.json` (so the example
+above is `config/courses/race.gpx`); an absolute path is used as is. The GPX is read
+once at boot: the points of every segment of its first track, or of its first route
+when the track has none. The server refuses to start (exit code 1, with the GPX path and
+the reason) when the file cannot be read, a point has a missing or invalid `lat`/`lon`,
+there are fewer than 2 points, or the course has zero length (all points identical).
+Without `coursePath` the event has no course: `hasCourse` is `false` and
+`GET /api/v1/course` returns 404.
+
 ## Commands
 
 | Command | What it does |
@@ -71,6 +88,7 @@ All read endpoints are public (no auth). The server binds `127.0.0.1` only.
 | --- | --- |
 | `GET /api/v1/health` | `{"ok":true,"serverNow":...,"eventId":"..."}` |
 | `GET /api/v1/snapshot` | The current `Snapshot` (event info, one view and one track per runner). Polling fallback. |
+| `GET /api/v1/course` | The event's course as a GeoJSON `LineString` (`{"type":"LineString","coordinates":[[lon,lat],...]}`, note the `[lon, lat]` order), or `404 NO_COURSE` when none is configured. Never sent over SSE. |
 | `GET /api/v1/live` | Server-Sent Events: an `event: snapshot` frame on connect, then `track` (appended points) and `runner` (replaced view) frames on every change, and a `: ping` comment every 20 s |
 | `POST /api/v1/ingest` | Runner positions (auth: `Authorization: Bearer <runnerKey>`). Body: one `IngestBatch` (one session, strictly increasing `seq`, at most 200 records). Reply: `IngestAck` `{"sessionId","ackedThroughSeq","serverNow"}`. Resending a batch is safe: already stored `seq`s are ignored. |
 | `GET /` | The live map (Leaflet, OpenStreetMap tiles): one colored marker and track per runner, a runner list with ticking "last update" ages; tap a runner to highlight it. `GET /diagnostic.html` is the live-stream diagnostic page. Both come from `web/dist/` (run `pnpm --filter web build` first; skipped with a warning if missing) |

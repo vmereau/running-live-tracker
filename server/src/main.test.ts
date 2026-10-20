@@ -7,7 +7,8 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
-import { ErrorBody, IngestAck, RunnerEvent, Snapshot, TrackEvent } from '@running-live-tracker/shared';
+import { CourseGeoJson, ErrorBody, IngestAck, RunnerEvent, Snapshot, TrackEvent } from '@running-live-tracker/shared';
+import { loadCourse } from './config/load-course.ts';
 import { generateKey } from '../scripts/keygen.ts';
 
 const mainPath = join(import.meta.dirname, 'main.ts');
@@ -226,6 +227,41 @@ test('boot aborts with exit code 1 naming the path when the config is missing', 
   const res = await bootToExit(path);
   assert.equal(res.code, 1, res.stderr);
   assert.ok(res.stderr.includes(path), res.stderr);
+});
+
+function exampleWithCourse(name: string, coursePath: string): string {
+  const path = join(dir, name);
+  writeFileSync(path, JSON.stringify({ ...JSON.parse(readFileSync(exampleConfig, 'utf8')), coursePath }));
+  return path;
+}
+
+test('boot aborts with exit code 1 naming the GPX path when the course is invalid', async () => {
+  writeFileSync(join(dir, 'one-point.gpx'), '<gpx><trk><trkseg><trkpt lat="1" lon="2"/></trkseg></trk></gpx>');
+  const res = await bootToExit(exampleWithCourse('bad-course.json', 'one-point.gpx'));
+  assert.equal(res.code, 1, res.stderr);
+  assert.ok(res.stderr.includes(join(dir, 'one-point.gpx')), res.stderr);
+  assert.ok(res.stderr.includes('at least 2 points'), res.stderr);
+  assert.ok(!res.stdout.includes('server ready'));
+});
+
+test('boots with a course: EventInfo reports it and GET /api/v1/course serves it', async () => {
+  const lap = join(import.meta.dirname, '..', '..', 'shared', 'fixtures', 'gpx', 'lap.gpx');
+  const port = await freePort();
+  const configPath = exampleWithCourse('with-course.json', lap);
+  const expected = loadCourse(configPath, lap);
+  const child = startMain({ PORT: String(port), EVENT_CONFIG: configPath });
+  try {
+    await waitForReady(child).ready;
+    const snap = Snapshot.parse(await (await fetch(`http://127.0.0.1:${port}/api/v1/snapshot`)).json());
+    assert.equal(snap.event.hasCourse, true);
+    assert.equal(snap.event.lengthM, expected.lengthM);
+    const res = await fetch(`http://127.0.0.1:${port}/api/v1/course`);
+    assert.equal(res.status, 200);
+    const body = CourseGeoJson.parse(await res.json());
+    assert.deepStrictEqual(body.coordinates, expected.points.map((p) => [p.lon, p.lat]));
+  } finally {
+    child.kill();
+  }
 });
 
 for (const bad of ['abc', '0x50', '8e3', '0', '70000']) {

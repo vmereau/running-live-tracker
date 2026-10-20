@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventInfo, Snapshot } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import { buildCourse } from '../domain/course.ts';
 import { buildEventInfo, buildSnapshot, initialRunnerView } from './snapshot.ts';
 
 const config: EventConfig = {
@@ -28,6 +29,23 @@ test('buildEventInfo copies public fields only and passes the strict schema', ()
       { runnerId: 'bob', displayName: 'Bob', color: '#3cb44b' },
     ],
   });
+});
+
+test('with a course: hasCourse true and lengthM = course length, no geometry in the event info', () => {
+  const course = buildCourse([
+    { lat: 48.85, lon: 2.35 },
+    { lat: 48.86, lon: 2.36 },
+  ]);
+  const info = EventInfo.parse(buildEventInfo(config, course));
+  assert.equal(info.hasCourse, true);
+  assert.equal(info.lengthM, course.lengthM);
+  const snap = Snapshot.parse(buildSnapshot(config, 0, new Map(), course));
+  assert.deepStrictEqual(snap.event, info);
+  const json = JSON.stringify(snap);
+  assert.ok(!json.includes('48.85') && !json.includes('coordinates') && !json.includes('cumulativeM'), json);
+  // No course (explicit null or omitted): the defaults.
+  assert.deepStrictEqual(buildEventInfo(config, null), buildEventInfo(config));
+  assert.equal(buildEventInfo(config).lengthM, null);
 });
 
 test('buildSnapshot has one notStarted view and an empty track per runner, in config order', () => {

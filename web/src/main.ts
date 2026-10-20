@@ -1,5 +1,6 @@
 // Live map page (Story 1.6). Wiring only: the store is fed by the SSE client,
-// the map and the list read it and share the runner selection.
+// the map and the list read it and share the runner selection; the course is
+// fetched once a snapshot says the event has one.
 import 'leaflet/dist/leaflet.css';
 import './styles.css';
 import { createStore } from './store.ts';
@@ -7,6 +8,7 @@ import { createSelection } from './selection.ts';
 import { connectLive } from './live-client.ts';
 import { createMapView } from './map-view.ts';
 import { createRunnerList } from './runner-list.ts';
+import { watchCourse } from './course.ts';
 
 const $ = (id: string): HTMLElement => {
   const el = document.getElementById(id);
@@ -16,6 +18,7 @@ const $ = (id: string): HTMLElement => {
 
 const store = createStore();
 const selection = createSelection();
-createMapView($('map'), store, selection);
+const mapView = createMapView($('map'), store, selection);
+watchCourse(store, mapView.setCourse);
 const list = createRunnerList($('panel'), $('banner'), store, selection);
 connectLive(store, list.setConnection);

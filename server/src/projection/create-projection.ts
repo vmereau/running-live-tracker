@@ -5,6 +5,7 @@
 import { isDeepStrictEqual } from 'node:util';
 import type { RunnerView, Snapshot, TrackPoint } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import type { Course } from '../domain/course.ts';
 import type { Store } from '../store/open-store.ts';
 import { applyRecords, compareRunKeys, initialRunnerState, toRunnerView } from './apply-records.ts';
 import type { RunnerState } from './apply-records.ts';
@@ -36,6 +37,8 @@ export type Projection = {
 export type CreateProjectionOptions = {
   config: EventConfig;
   store: Pick<Store, 'readSession' | 'readRunRecords'>;
+  /** The event's course, if configured: fills EventInfo.hasCourse and lengthM. */
+  course?: Course | null;
 };
 
 function isPrefix(prefix: readonly TrackPoint[], track: readonly TrackPoint[]): boolean {
@@ -44,7 +47,7 @@ function isPrefix(prefix: readonly TrackPoint[], track: readonly TrackPoint[]): 
   return true;
 }
 
-export function createProjection({ config, store }: CreateProjectionOptions): Projection {
+export function createProjection({ config, store, course = null }: CreateProjectionOptions): Projection {
   const { opensAt, closesAt } = config;
   const states = new Map<string, RunnerState>();
   const views = new Map<string, RunnerView>();
@@ -92,7 +95,7 @@ export function createProjection({ config, store }: CreateProjectionOptions): Pr
   function snapshot(now: number): Snapshot {
     const projected = new Map<string, ProjectedRunner>();
     for (const [runnerId, state] of states) projected.set(runnerId, { view: views.get(runnerId)!, track: state.track });
-    return buildSnapshot(config, now, projected);
+    return buildSnapshot(config, now, projected, course);
   }
 
   function onChange(next: ChangeListener): void {

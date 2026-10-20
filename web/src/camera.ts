@@ -73,6 +73,23 @@ export function planStoreChange(state: SelectionState, runners: Runners, zoom: n
   return planFollow(state, runners, zoom, memory);
 }
 
+/**
+ * Once the course has loaded. In the overview, before any runner fit and while
+ * no runner has a position, fit the course. Does not set `fitted`, so the first
+ * runner position still triggers the usual runner fit.
+ */
+export function planCourseLoaded(
+  state: SelectionState,
+  runners: Runners,
+  points: readonly LatLon[],
+  memory: CameraMemory,
+): CameraPlan {
+  if (state.selectedId !== null || memory.fitted || points.length === 0 || runners.some((r) => r.lastPosition)) {
+    return { action: NONE, memory };
+  }
+  return { action: { kind: 'fit', points: points.map((p) => ({ lat: p.lat, lon: p.lon })) }, memory };
+}
+
 /** After every selection change. */
 export function planSelectionChange(
   previous: SelectionState,

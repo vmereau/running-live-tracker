@@ -4,6 +4,7 @@ import {
   type CameraMemory,
   FOLLOW_MIN_ZOOM,
   initialCameraMemory,
+  planCourseLoaded,
   planSelectionChange,
   planStoreChange,
   recenterVisible,
@@ -131,4 +132,26 @@ test('Re-center is visible only when selected, paused and with a position', () =
   assert.equal(recenterVisible(pausedA, { lastPosition: null }), false);
   assert.equal(recenterVisible(pausedA, undefined), false);
   assert.equal(recenterVisible(overview, undefined), false);
+});
+
+const COURSE = [
+  { lat: 48.84, lon: 2.33 },
+  { lat: 48.85, lon: 2.34 },
+];
+
+test('course loaded in the overview with no runner position: fit the course, without setting fitted', () => {
+  const memory = initialCameraMemory();
+  const plan = planCourseLoaded(overview, runners(null, null), COURSE, memory);
+  assert.deepStrictEqual(plan.action, { kind: 'fit', points: COURSE });
+  assert.deepStrictEqual(plan.memory, memory);
+  // The first runner position still fits the runners.
+  assert.deepStrictEqual(planStoreChange(overview, runners(A1, null), 10, plan.memory).action, { kind: 'fit', points: [A1] });
+});
+
+test('course loaded: no fit once a runner has a position, after a runner fit, or with a runner selected', () => {
+  const none = { kind: 'none' };
+  assert.deepStrictEqual(planCourseLoaded(overview, runners(A1, null), COURSE, initialCameraMemory()).action, none);
+  assert.deepStrictEqual(planCourseLoaded(overview, runners(null, null), COURSE, { ...initialCameraMemory(), fitted: true }).action, none);
+  assert.deepStrictEqual(planCourseLoaded(followA, runners(null, null), COURSE, initialCameraMemory()).action, none);
+  assert.deepStrictEqual(planCourseLoaded(overview, runners(null, null), [], initialCameraMemory()).action, none);
 });

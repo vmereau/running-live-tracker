@@ -124,6 +124,16 @@ export const Snapshot = z.object({
 });
 export type Snapshot = z.infer<typeof Snapshot>;
 
+/**
+ * GET /api/v1/course body: the event's course as a GeoJSON LineString. The only
+ * place `[lon, lat]` order is used; it is never sent over SSE.
+ */
+export const CourseGeoJson = z.strictObject({
+  type: z.literal('LineString'),
+  coordinates: z.array(z.tuple([lon, lat])).min(2),
+});
+export type CourseGeoJson = z.infer<typeof CourseGeoJson>;
+
 // ---- SSE payloads (AD-6) ----
 
 export const RunnerEvent = z.object({

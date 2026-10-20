@@ -35,6 +35,9 @@ export function createStore(clock: () => number = Date.now): Store {
     commit(snapshot, snapshot.serverNow);
   }
 
+  // Invariant: runner and track events copy the snapshot but keep its `event`
+  // object by reference; only applySnapshot (a fresh SSE snapshot) brings a new
+  // one. course.ts (watchCourse) depends on this to retry only on new snapshots.
   function applyRunner({ serverNow, view }: RunnerEvent): void {
     const current = state.snapshot;
     if (!current) return; // AD-6: nothing to patch before the first snapshot

@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { Snapshot } from '@running-live-tracker/shared';
 import type { IngestRecord } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import { buildCourse } from '../domain/course.ts';
 import { openStore } from '../store/open-store.ts';
 import type { Store } from '../store/open-store.ts';
 import { createProjection } from './create-projection.ts';
@@ -62,6 +63,24 @@ test('an empty store projects every runner notStarted with an empty track', () =
     assert.equal(snap.serverNow, 5);
     assert.deepStrictEqual(snap.runners, [initialRunnerView('alice'), initialRunnerView('bob')]);
     assert.deepStrictEqual(snap.tracks, { alice: [], bob: [] });
+  } finally {
+    store.close();
+  }
+});
+
+test('the course option fills hasCourse and lengthM in snapshots; without it there is no course', () => {
+  const store = openStore(':memory:');
+  try {
+    const course = buildCourse([
+      { lat: 48, lon: 2 },
+      { lat: 48.01, lon: 2 },
+    ]);
+    const withCourse = createProjection({ config, store, course }).snapshot(0).event;
+    assert.equal(withCourse.hasCourse, true);
+    assert.equal(withCourse.lengthM, course.lengthM);
+    const without = createProjection({ config, store }).snapshot(0).event;
+    assert.equal(without.hasCourse, false);
+    assert.equal(without.lengthM, null);
   } finally {
     store.close();
   }

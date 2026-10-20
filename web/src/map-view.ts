@@ -5,13 +5,24 @@
 // otherwise left to the spectator; with a runner selected and followed, a store
 // change that moves that runner pans to its new position (a track event or an
 // unchanged position does nothing). A hand pan or zoom pauses following
-// and shows a "Re-center" control. The decisions live in camera.ts; this
-// module only executes them.
+// and shows a "Re-center" control. The event's course (Story 3.3), once
+// loaded, is drawn as a dashed neutral line in its own pane beneath every
+// track; while no runner has a position, the overview fits it. The decisions
+// live in camera.ts; this module only executes them.
 import L from 'leaflet';
 import type { RunnerView, Snapshot, TrackPoint } from '@running-live-tracker/shared';
 import type { Store } from './store.ts';
 import type { Selection, SelectionState } from './selection.ts';
-import { type CameraAction, type CameraPlan, initialCameraMemory, planSelectionChange, planStoreChange, recenterVisible } from './camera.ts';
+import {
+  type CameraAction,
+  type CameraPlan,
+  type LatLon,
+  initialCameraMemory,
+  planCourseLoaded,
+  planSelectionChange,
+  planStoreChange,
+  recenterVisible,
+} from './camera.ts';
 
 const FALLBACK_COLOR = '#555555';
 const MARKER_RADIUS = 7;
@@ -19,10 +30,24 @@ const MARKER_RADIUS_SELECTED = 11;
 const LINE_WEIGHT = 3;
 const LINE_WEIGHT_SELECTED = 6;
 const OVERVIEW_MAX_ZOOM = 16;
+const COURSE_STYLE: L.PolylineOptions = {
+  pane: 'course',
+  interactive: false,
+  color: '#3a3a3a',
+  weight: 4,
+  opacity: 0.6,
+  dashArray: '8 8',
+  lineCap: 'butt',
+};
+
+export type MapView = {
+  /** Draws the course beneath the tracks (replacing any previous one) and fits it if nothing else was fitted yet. */
+  setCourse(points: readonly LatLon[]): void;
+};
 
 type Layers = { color: string; line: L.Polyline; marker: L.CircleMarker | null; track: TrackPoint[] | undefined };
 
-export function createMapView(container: HTMLElement, store: Store, selection: Selection): void {
+export function createMapView(container: HTMLElement, store: Store, selection: Selection): MapView {
   const map = L.map(container, { worldCopyJump: true }).setView([20, 0], 2);
   L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19,
@@ -30,6 +55,11 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
   }).addTo(map);
   // Markers live above every track so a thick selected line never hides them.
   map.createPane('runners').style.zIndex = '450';
+  // The course sits below the tracks (overlayPane, 400) and never takes taps.
+  const coursePane = map.createPane('course');
+  coursePane.style.zIndex = '350';
+  coursePane.style.pointerEvents = 'none';
+  let courseLine: L.Polyline | null = null;
 
   const layers = new Map<string, Layers>();
   let camera = initialCameraMemory();
@@ -184,6 +214,14 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
     run(plan);
     updateRecenter();
   });
+
+  function setCourse(points: readonly LatLon[]): void {
+    courseLine?.remove();
+    courseLine = L.polyline(points.map((p) => [p.lat, p.lon] as L.LatLngTuple), COURSE_STYLE).addTo(map);
+    run(planCourseLoaded(selection.get(), runners(), points, camera));
+  }
+
+  return { setCourse };
 }
 
 type RecenterControl = L.Control & { setVisible: (visible: boolean) => void };

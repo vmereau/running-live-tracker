@@ -3,8 +3,9 @@ import { statSync } from 'node:fs';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import type { FastifyInstance, FastifyRequest, FastifyServerOptions } from 'fastify';
-import type { ErrorBody } from '@running-live-tracker/shared';
+import type { CourseGeoJson, ErrorBody } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import type { Course } from '../config/load-course.ts';
 import type { Ingest } from '../ingest/ingest.ts';
 import { createLiveHub } from '../live/sse-hub.ts';
 import type { Projection } from '../projection/create-projection.ts';
@@ -24,6 +25,8 @@ export type BuildAppOptions = {
   pingIntervalMs?: number;
   /** Built web app (web/dist). Served at / when the directory exists. */
   webRoot?: string;
+  /** The event's course, served by GET /api/v1/course (404 NO_COURSE when null). */
+  course?: Course | null;
 };
 
 function isDirectory(path: string): boolean {
@@ -32,6 +35,11 @@ function isDirectory(path: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** The course as a GeoJSON LineString: the only place `[lon, lat]` order is used. */
+function toGeoJson(course: Course): CourseGeoJson {
+  return { type: 'LineString', coordinates: course.points.map((p) => [p.lon, p.lat] as [number, number]) };
 }
 
 function errorBody(code: string, message: string): ErrorBody {
@@ -50,7 +58,16 @@ function statusOf(error: unknown): number {
   return typeof status === 'number' ? status : 500;
 }
 
-export function buildApp({ config, ingest, projection, now, logger = false, pingIntervalMs, webRoot }: BuildAppOptions): FastifyInstance {
+export function buildApp({
+  config,
+  ingest,
+  projection,
+  now,
+  logger = false,
+  pingIntervalMs,
+  webRoot,
+  course = null,
+}: BuildAppOptions): FastifyInstance {
   const app = Fastify({ logger });
   const getSnapshot = () => projection.snapshot(now());
   const hub = createLiveHub({ getSnapshot, now, pingIntervalMs });
@@ -65,6 +82,13 @@ export function buildApp({ config, ingest, projection, now, logger = false, ping
   }));
 
   app.get('/api/v1/snapshot', async () => getSnapshot());
+
+  // Built once: the course is read-only at runtime. No auth, never sent over SSE.
+  const courseGeoJson = course === null ? null : toGeoJson(course);
+  app.get('/api/v1/course', async (_request, reply) => {
+    if (courseGeoJson === null) return reply.code(404).send(errorBody('NO_COURSE', 'This event has no course'));
+    return courseGeoJson;
+  });
 
   // AD-6: hijacked reply, so no Fastify hook (compression, onSend) touches the stream.
   // No auto HEAD route: a hijacked HEAD response would never flush and would hold a hub slot.

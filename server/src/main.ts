@@ -4,6 +4,8 @@ import { resolve } from 'node:path';
 import { createKeyLookup } from './config/key-lookup.ts';
 import { ConfigError, loadConfig } from './config/load-config.ts';
 import type { EventConfig } from './config/load-config.ts';
+import { loadCourse } from './config/load-course.ts';
+import type { Course } from './config/load-course.ts';
 import { buildApp } from './http/build-app.ts';
 import { createIngest } from './ingest/ingest.ts';
 import { createProjection } from './projection/create-projection.ts';
@@ -25,8 +27,10 @@ const configPath = resolve(process.env['EVENT_CONFIG'] ?? resolve(repoRoot, 'con
 const webRoot = resolve(repoRoot, 'web', 'dist'); // built by `pnpm --filter web build`
 
 let config: EventConfig;
+let course: Course | null;
 try {
   config = loadConfig(configPath);
+  course = config.coursePath === undefined ? null : loadCourse(configPath, config.coursePath);
 } catch (err) {
   if (err instanceof ConfigError) {
     console.error(err.message);
@@ -47,7 +51,7 @@ try {
 let projection: Projection;
 try {
   // Boot replay of the fix log into the in-memory projection.
-  projection = createProjection({ config, store });
+  projection = createProjection({ config, store, course });
 } catch (err) {
   console.error(`Cannot replay the data store at ${dbPath}: ${(err as Error).message}`);
   store.close();
@@ -56,7 +60,7 @@ try {
 const ingest = createIngest({ store, findRunner: createKeyLookup(config), projection, now: Date.now });
 
 // JSON logs to stdout; writing them under data/logs is Story 4.2.
-const app = buildApp({ config, ingest, projection, now: Date.now, logger: true, webRoot });
+const app = buildApp({ config, ingest, projection, now: Date.now, logger: true, webRoot, course });
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
@@ -80,7 +84,10 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => vo
 
 try {
   await app.listen({ host: HOST, port });
-  app.log.info({ eventId: config.eventId, configPath, dataDir, dbPath, webRoot }, 'server ready');
+  app.log.info(
+    { eventId: config.eventId, configPath, dataDir, dbPath, webRoot, courseLengthM: course?.lengthM ?? null },
+    'server ready',
+  );
 } catch (err) {
   app.log.error({ err }, 'failed to start');
   store.close();

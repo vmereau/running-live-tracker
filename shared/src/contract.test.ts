@@ -4,6 +4,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import type { ZodType } from 'zod';
 import {
+  CourseGeoJson,
   EndRecord,
   ErrorBody,
   EventInfo,
@@ -31,6 +32,7 @@ const schemas: Record<string, ZodType> = {
   snapshot: Snapshot,
   'runner-event': RunnerEvent,
   'track-event': TrackEvent,
+  'course-geo-json': CourseGeoJson,
 };
 
 const fixturesDir = join(import.meta.dirname, '..', 'fixtures');
@@ -82,4 +84,9 @@ test('IngestBatch itself does not cap the record count (ingest returns 413)', ()
     sessionId: '3f1c2b9e-8a4d-4c6e-9b2a-1d5e7f0a3c48', sessionStartedAt: 0, records,
   });
   assert.ok(result.success);
+});
+
+test('CourseGeoJson is [lon, lat]: a latitude-range value in second place only', () => {
+  assert.ok(CourseGeoJson.safeParse({ type: 'LineString', coordinates: [[170, 80], [171, 81]] }).success);
+  assert.equal(CourseGeoJson.safeParse({ type: 'LineString', coordinates: [[80, 170], [81, 171]] }).success, false);
 });

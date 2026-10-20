@@ -22,3 +22,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-2-switching-runners-and-following-the-selected-runner.md`
   summary: The runner-list DOM wiring (All runners button and its pressed state, the 1 s refresh of the selected runner's stats block) has no automated test.
   evidence: No test imports `web/src/runner-list.ts`; dropping `renderStats()` from the interval freezes Elapsed/Last update and passes `pnpm check`. Same gap as the 1.6 live-client item: needs a DOM-free seam or a DOM test setup.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-3-shared-gpx-course-on-the-map.md`
+  summary: The map's course rendering (`setCourse`: [lat, lon] order, `course` pane below the tracks, fit call) and its `main.ts` wiring to `watchCourse` have no automated test.
+  evidence: No test imports `web/src/map-view.ts` or `main.ts`; swapping the tuple to `[p.lon, p.lat]`, raising the pane z-index above 400, or dropping `watchCourse(...)` passes `pnpm check`. Same fake-map seam as the 3.2 camera-executor item would cover it.

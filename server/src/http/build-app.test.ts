@@ -5,8 +5,9 @@ import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { FastifyInstance } from 'fastify';
-import { ErrorBody, Snapshot } from '@running-live-tracker/shared';
+import { CourseGeoJson, ErrorBody, Snapshot } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
+import { loadCourse } from '../config/load-course.ts';
 import type { Ingest } from '../ingest/ingest.ts';
 import type { ChangeListener, Projection } from '../projection/create-projection.ts';
 import { buildSnapshot, initialRunnerView } from '../projection/snapshot.ts';
@@ -512,6 +513,65 @@ test('projection changes reach open /api/v1/live streams as track then runner', 
     assert.deepStrictEqual(data(frames[1]!), { serverNow: 1_760_000_000_777, runnerId: 'alice', points: twoPoints });
     assert.deepStrictEqual(data(frames[2]!), { serverNow: 1_760_000_000_777, view: activeView });
     await reader.cancel();
+  } finally {
+    await app.close();
+  }
+});
+
+// ---- Story 3.3: the course ----
+
+const lapGpx = join(import.meta.dirname, '..', '..', '..', 'shared', 'fixtures', 'gpx', 'lap.gpx');
+
+function courseApp() {
+  const course = loadCourse(join(import.meta.dirname, 'event.json'), lapGpx);
+  const projection: Pick<Projection, 'snapshot' | 'onChange'> = {
+    snapshot: (now) => buildSnapshot(config, now, new Map(), course),
+    onChange: () => {},
+  };
+  return { course, app: buildApp({ config, projection, ingest: noIngest, now: () => 1, course, pingIntervalMs: 60_000 }) };
+}
+
+test('GET /api/v1/course returns the course as a GeoJSON LineString in [lon, lat] order', async () => {
+  const { course, app } = courseApp();
+  try {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/course' });
+    assert.equal(res.statusCode, 200);
+    assert.match(String(res.headers['content-type']), /^application\/json/);
+    const body = CourseGeoJson.parse(res.json());
+    assert.deepStrictEqual(res.json(), body, 'strict schema: no extra keys');
+    assert.equal(body.coordinates.length, course.points.length);
+    assert.deepStrictEqual(body.coordinates, course.points.map((p) => [p.lon, p.lat]));
+    // lap.gpx is in Paris: lon ~2.33, lat ~48.85.
+    const [lon, lat] = body.coordinates[0]!;
+    assert.ok(lon > 2 && lon < 3 && lat > 48 && lat < 49, `${lon}, ${lat}`);
+  } finally {
+    await app.close();
+  }
+});
+
+test('GET /api/v1/course without a course is 404 NO_COURSE', async () => {
+  const app = makeApp();
+  try {
+    const res = await app.inject({ method: 'GET', url: '/api/v1/course' });
+    assert.equal(res.statusCode, 404);
+    assert.equal(ErrorBody.parse(res.json()).error.code, 'NO_COURSE');
+  } finally {
+    await app.close();
+  }
+});
+
+test('with a course, the SSE snapshot reports it but carries no course geometry', async () => {
+  const { course, app } = courseApp();
+  const base = await listen(app);
+  try {
+    const res = await fetch(`${base}/api/v1/live`);
+    const { text, reader } = await readUntil(res.body!, (t) => t.includes('\n\n'));
+    await reader.cancel();
+    const data = text.split('\n').find((l) => l.startsWith('data: '))!;
+    const snap = Snapshot.parse(JSON.parse(data.slice('data: '.length)));
+    assert.equal(snap.event.hasCourse, true);
+    assert.equal(snap.event.lengthM, course.lengthM);
+    assert.ok(!text.includes('coordinates') && !text.includes(String(course.points[1]!.lat)), text);
   } finally {
     await app.close();
   }
