@@ -11,6 +11,8 @@ This repo is a pnpm workspace:
 | `@running-live-tracker/web` | `web/` | Vite app (vanilla TS), served by the server at `/` from `web/dist/`: the live map at `/`, and the Story 1.2 live-stream diagnostic page at `/diagnostic.html` |
 | `@running-live-tracker/shared` | `shared/` | Wire contract (`src/contract.ts`, zod) and JSON fixtures |
 
+The Android app lives in `android/` (Gradle, not part of the pnpm workspace): see [Android app](#android-app).
+
 ## Prerequisites
 
 - Node.js **24.22.0** (see `.node-version`). With nvm: `nvm install 24.22.0 && nvm use 24.22.0`.
@@ -134,6 +136,50 @@ pnpm simulate --base-url https://<machine>.<tailnet>.ts.net --gpx shared/fixture
 
 Durations take an `s`, `m` or `h` suffix (a bare number is seconds). Sample tracks are in
 `shared/fixtures/gpx/` (`straight.gpx`, `out-and-back.gpx`, `lap.gpx`).
+
+## Android app
+
+`android/` is a Gradle project with a single `:app` module (Kotlin, Compose, package
+`com.runninglivetracker`). It is sideloaded, never published. Pins live in
+`android/gradle/libs.versions.toml`: AGP 9.4.1 with built-in Kotlin (KGP and the compose
+plugin 2.4.21, no `kotlin-android`, no kapt), KSP 2.3.12, Compose BOM 2026.09.00, Room 2.8.5,
+DataStore Preferences 1.2.1, compileSdk / targetSdk / minSdk 37 / 36 / 29, Gradle 9.6.1 through
+the wrapper, JDK 17 toolchain.
+
+So far the app has one settings screen: the server URL and the runner key (from
+`pnpm keygen`), saved in DataStore, plus a "Test connection" button that calls
+`GET /api/v1/health`. Rules:
+
+- The key is trimmed and must be 43 base64url characters.
+- The URL must be `https://<host>` (a port and a path prefix are allowed). Debug builds also accept `http://localhost`
+  (physical phone through `adb reverse tcp:8787 tcp:8787`) and `http://10.0.2.2` (emulator).
+  A trailing `/` is dropped; a query or fragment is rejected. Release builds pin cleartext
+  off in the network security config; `app/src/debug/res/xml/` overrides it for those two hosts.
+
+The wire contract is hand-written in `app/src/main/java/com/runninglivetracker/contract/Contract.kt`
+and checked by JVM tests against `shared/fixtures` (valid fixtures round-trip, invalid ones are
+rejected).
+
+Setup (once):
+
+- JDK 17 (`JAVA_HOME`).
+- An Android SDK with `platforms;android-37.0`, `build-tools;37.0.0` and `platform-tools`.
+  Point `android/local.properties` (git-ignored) at it, for example `sdk.dir=D\:/Android/Sdk`,
+  or set `ANDROID_HOME`.
+- Optional: set `GRADLE_USER_HOME` to put the Gradle cache (a few GB) on another disk.
+
+```sh
+cd android
+./gradlew test assembleDebug assembleRelease   # JVM tests + app/build/outputs/apk/{debug,release}/
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+Release signing: create a git-ignored `android/keystore.properties` with `storeFile` (path
+relative to `android/`), `storePassword`, `keyAlias` and `keyPassword`. Without it the
+release APK is signed with the debug key, so it is always installable.
+
+Try it on the emulator: run `pnpm dev`, install the debug APK, enter `http://10.0.2.2:8787`
+and press Test connection: it shows `Connected — event <eventId>`.
 
 ## Public access
 

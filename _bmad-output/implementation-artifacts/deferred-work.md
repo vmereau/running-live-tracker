@@ -4,3 +4,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-1-6-live-map-web-page.md`
   summary: The map page may show stale data with no banner if a phone browser keeps an SSE stream "open" but silent after backgrounding (no ping-timeout or visibilitychange recovery).
   evidence: Unverified (would be medium). Settle it in the Story 4.3 phone soak test: background the browser for minutes, return, and check whether EventSource errors/reconnects or stays silently stale.
+- source_spec: `_bmad-output/implementation-artifacts/spec-2-1-android-app-scaffold-settings-and-wire-contract.md`
+  summary: The Kotlin `HealthResponse` (ok, serverNow, eventId) is not linked by any shared fixture to the server's `/api/v1/health` payload, so drift would pass both test suites.
+  evidence: `HealthClientTest` and `build-app.test.ts` each use their own literal body; `shared/fixtures` has no health fixture. Fix by adding a shared health fixture read on both sides (needs a shared change, forbidden in 2.1).

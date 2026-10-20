@@ -2,6 +2,9 @@
 // the phone, the server and the web page. Schemas strip unknown keys by
 // default so a phone sending an extra field is not rejected; only EventInfo is
 // strict, because it is a public payload that must never leak config fields.
+// The Android app hand-writes the ingest side in
+// android/app/src/main/java/com/runninglivetracker/contract/Contract.kt: a contract
+// change updates this file, shared/fixtures and Contract.kt together.
 import { z } from 'zod';
 
 /** Largest number of records accepted in one ingest batch (AD-3). Enforced by ingest (413), not by the schema. */

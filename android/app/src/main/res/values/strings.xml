@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Running Live Tracker</string>
+    <string name="settings_title">Settings</string>
+    <string name="base_url_label">Server URL</string>
+    <string name="base_url_hint">https://machine.tailnet.ts.net</string>
+    <string name="runner_key_label">Runner key</string>
+    <string name="show_key">Show</string>
+    <string name="hide_key">Hide</string>
+    <string name="save">Save</string>
+    <string name="saved">Saved</string>
+    <string name="test_connection">Test connection</string>
+    <string name="testing">Testing…</string>
+</resources>
