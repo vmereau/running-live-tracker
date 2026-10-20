@@ -70,3 +70,32 @@ export function runnerStatsText(
     avgPace: formatPace(view.avgPaceSPerKm),
   };
 }
+
+export type SelectedPanelText = {
+  /** "Name · status". */
+  title: string;
+  /** True while the runner has not started: the panel says so instead of showing run stats. */
+  notStarted: boolean;
+  /** Label/value pairs in display order. Elapsed and last update move with `now`. */
+  rows: [label: string, value: string][];
+};
+
+/** The stats block of the selected runner: server values formatted, elapsed and age measured against `now`. */
+export function selectedPanelText(view: RunnerView, name: string, now: number): SelectedPanelText {
+  const title = `${name} · ${statusLabel(view.status)}`;
+  const age = ageMs(view.lastReceivedAt, now);
+  const lastUpdate: [string, string] = ['Last update', formatAge(age)];
+  if (view.status === 'notStarted') return { title, notStarted: true, rows: [lastUpdate] };
+  const stats = runnerStatsText(view, now);
+  return {
+    title,
+    notStarted: false,
+    rows: [
+      ['Elapsed', stats.elapsed],
+      ['Distance', stats.distance],
+      ['Current pace', stats.currentPace],
+      ['Average pace', stats.avgPace],
+      lastUpdate,
+    ],
+  };
+}

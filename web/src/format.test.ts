@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ageMs, elapsedMs, formatAge, formatDistanceKm, formatElapsed, formatPace, runnerStatsText, statusLabel } from './format.ts';
+import type { RunnerView } from '@running-live-tracker/shared';
+import { ageMs, elapsedMs, formatAge, formatDistanceKm, formatElapsed, formatPace, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
 
 test('formats ages as seconds below a minute and floored minutes above', () => {
   assert.equal(formatAge(0), '0 s ago');
@@ -74,4 +75,68 @@ test('runnerStatsText: each server value lands in its own slot; elapsed ticks wh
 
   const notStarted = { runStartedAt: null, runEndedAt: null, distanceM: 0, currentPaceSPerKm: null, avgPaceSPerKm: null };
   assert.deepStrictEqual(runnerStatsText(notStarted, 5_000), { elapsed: '—', distance: '0.0 km', currentPace: '—', avgPace: '—' });
+});
+
+function runnerView(overrides: Partial<RunnerView>): RunnerView {
+  return {
+    runnerId: 'r1',
+    status: 'active',
+    runStartedAt: 1_000,
+    runEndedAt: null,
+    lastFixAt: 60_000,
+    lastReceivedAt: 60_000,
+    lastPosition: { lat: 48.85, lon: 2.35 },
+    distanceM: 2_345,
+    progressM: null,
+    remainingM: null,
+    progressFraction: null,
+    offCourse: false,
+    avgPaceSPerKm: 302,
+    currentPaceSPerKm: 298,
+    etaAt: null,
+    ...overrides,
+  };
+}
+
+test('selectedPanelText: active runner shows every stat, elapsed and age tick with now', () => {
+  const view = runnerView({});
+  assert.deepStrictEqual(selectedPanelText(view, 'Alice', 61_000), {
+    title: 'Alice · running',
+    notStarted: false,
+    rows: [
+      ['Elapsed', '0:01:00'],
+      ['Distance', '2.3 km'],
+      ['Current pace', '4:58 /km'],
+      ['Average pace', '5:02 /km'],
+      ['Last update', '1 s ago'],
+    ],
+  });
+  const later = selectedPanelText(view, 'Alice', 71_000).rows;
+  assert.deepStrictEqual(later[0], ['Elapsed', '0:01:10']);
+  assert.deepStrictEqual(later[4], ['Last update', '11 s ago']);
+});
+
+test('selectedPanelText: notStarted runner says so and shows only the last update', () => {
+  const view = runnerView({
+    status: 'notStarted', runStartedAt: null, lastFixAt: null, lastReceivedAt: null, lastPosition: null,
+    distanceM: 0, avgPaceSPerKm: null, currentPaceSPerKm: null,
+  });
+  assert.deepStrictEqual(selectedPanelText(view, 'Bob', 5_000), {
+    title: 'Bob · not started',
+    notStarted: true,
+    rows: [['Last update', 'no data yet']],
+  });
+});
+
+test('selectedPanelText: stopped runner shows the final elapsed time and no current pace', () => {
+  const view = runnerView({ status: 'stopped', runEndedAt: 31_000, currentPaceSPerKm: null });
+  const text = selectedPanelText(view, 'Carol', 999_000);
+  assert.equal(text.title, 'Carol · stopped');
+  assert.equal(text.notStarted, false);
+  assert.deepStrictEqual(text.rows.slice(0, 4), [
+    ['Elapsed', '0:00:30'],
+    ['Distance', '2.3 km'],
+    ['Current pace', '—'],
+    ['Average pace', '5:02 /km'],
+  ]);
 });

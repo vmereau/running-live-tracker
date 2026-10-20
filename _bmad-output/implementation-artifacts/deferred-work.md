@@ -16,3 +16,9 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-1-distance-pace-and-elapsed-time.md`
   summary: Unverified (medium if true): GPS jitter from accepted fixes (≤ 30 m accuracy) on a slow or stationary runner may inflate `distanceM` and make the average pace look faster, because every accepted segment is summed with no minimum-movement filter.
   evidence: `applyRecords` adds `segmentDistanceM` for every accepted fix. Settle it with the Epic 4 test-run comparison against the watch; if confirmed, add a movement threshold inside `domain/stats.ts`.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-switching-runners-and-following-the-selected-runner.md`
+  summary: The map's camera executor (programmatic-move guard, `dragstart`/`zoomstart` pause, `animate: false` on zoom-changing moves) has no automated test, so selecting a runner could silently start out paused.
+  evidence: Only `web/src/main.ts` imports `map-view.ts`; removing `guarded(...)` or `animate: false` passes `pnpm check`. `camera.test.ts` covers only the pure decisions. Needs a thin fake-map seam (on/setView/fitBounds/getZoom) testable under node:test.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-2-switching-runners-and-following-the-selected-runner.md`
+  summary: The runner-list DOM wiring (All runners button and its pressed state, the 1 s refresh of the selected runner's stats block) has no automated test.
+  evidence: No test imports `web/src/runner-list.ts`; dropping `renderStats()` from the interval freezes Elapsed/Last update and passes `pnpm check`. Same gap as the 1.6 live-client item: needs a DOM-free seam or a DOM test setup.

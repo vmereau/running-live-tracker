@@ -1,17 +1,24 @@
 // Leaflet map: one circle marker (current position) and one polyline (recorded
 // track) per runner, in the runner's configured color, synced from the store.
-// The view fits the data once, on the first snapshot that has any; after that
-// only the spectator moves the map (or selecting a runner pans to it).
+// View modes come from `selection`: in the "All runners" overview the map fits
+// the runners' positions on the first data and on every showAll(), and is
+// otherwise left to the spectator; with a runner selected and followed, a store
+// change that moves that runner pans to its new position (a track event or an
+// unchanged position does nothing). A hand pan or zoom pauses following
+// and shows a "Re-center" control. The decisions live in camera.ts; this
+// module only executes them.
 import L from 'leaflet';
-import type { Snapshot, TrackPoint } from '@running-live-tracker/shared';
+import type { RunnerView, Snapshot, TrackPoint } from '@running-live-tracker/shared';
 import type { Store } from './store.ts';
-import type { Selection } from './selection.ts';
+import type { Selection, SelectionState } from './selection.ts';
+import { type CameraAction, type CameraPlan, initialCameraMemory, planSelectionChange, planStoreChange, recenterVisible } from './camera.ts';
 
 const FALLBACK_COLOR = '#555555';
 const MARKER_RADIUS = 7;
 const MARKER_RADIUS_SELECTED = 11;
 const LINE_WEIGHT = 3;
 const LINE_WEIGHT_SELECTED = 6;
+const OVERVIEW_MAX_ZOOM = 16;
 
 type Layers = { color: string; line: L.Polyline; marker: L.CircleMarker | null; track: TrackPoint[] | undefined };
 
@@ -25,14 +32,45 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
   map.createPane('runners').style.zIndex = '450';
 
   const layers = new Map<string, Layers>();
-  let fitted = false;
+  let camera = initialCameraMemory();
+  /** True while code moves the map: a zoomstart seen then is not the spectator's. */
+  let programmatic = false;
+
+  /**
+   * Runs a programmatic move. Moves that change the zoom must use `animate: false`
+   * so their zoomstart fires synchronously, inside this guard.
+   */
+  function guarded(move: () => void): void {
+    programmatic = true;
+    try {
+      move();
+    } finally {
+      programmatic = false;
+    }
+  }
+
+  // Only real hand gestures pause following. `movestart` is never used: animated
+  // pans and invalidateSize (rotation, address bar, resize) fire it too.
+  map.on('dragstart', () => selection.pauseFollow());
+  map.on('zoomstart', () => {
+    if (!programmatic) selection.pauseFollow();
+  });
+
+  const recenter = createRecenterControl(() => selection.resumeFollow());
+  recenter.addTo(map); // added after the zoom control, so it sits right under it
 
   function colorOf(snapshot: Snapshot, runnerId: string): string {
     return snapshot.event.runners.find((r) => r.runnerId === runnerId)?.color ?? FALLBACK_COLOR;
   }
 
+  function selectedView(): RunnerView | undefined {
+    const { selectedId } = selection.get();
+    if (selectedId === null) return undefined;
+    return store.getState().snapshot?.runners.find((r) => r.runnerId === selectedId);
+  }
+
   function style(runnerId: string, entry: Layers): void {
-    const selected = selection.get() === runnerId;
+    const selected = selection.get().selectedId === runnerId;
     entry.line.setStyle({ weight: selected ? LINE_WEIGHT_SELECTED : LINE_WEIGHT, opacity: selected ? 1 : 0.8 });
     entry.marker?.setStyle({ weight: selected ? 3 : 2 });
     entry.marker?.setRadius(selected ? MARKER_RADIUS_SELECTED : MARKER_RADIUS);
@@ -73,7 +111,7 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
             fillColor: color,
             fillOpacity: 1,
           }).addTo(map);
-          entry.marker.on('click', () => selection.toggle(id));
+          entry.marker.on('click', () => selection.select(id));
         }
       } else if (entry.marker) {
         entry.marker.remove();
@@ -87,7 +125,6 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
         layers.delete(id);
       }
     }
-    if (!fitted) fitOnce(snapshot);
   }
 
   function remove(entry: Layers): void {
@@ -95,27 +132,77 @@ export function createMapView(container: HTMLElement, store: Store, selection: S
     entry.marker?.remove();
   }
 
-  function fitOnce(snapshot: Snapshot): void {
-    const points: L.LatLngTuple[] = [];
-    for (const view of snapshot.runners) {
-      if (view.lastPosition) points.push([view.lastPosition.lat, view.lastPosition.lon]);
+  /** Executes a camera plan and keeps its bookkeeping. */
+  function run({ action, memory }: CameraPlan): void {
+    camera = memory;
+    execute(action);
+  }
+
+  function execute(action: CameraAction): void {
+    switch (action.kind) {
+      case 'none':
+        return;
+      case 'fit': {
+        const bounds = L.latLngBounds(action.points.map((p) => [p.lat, p.lon] as L.LatLngTuple));
+        guarded(() => map.fitBounds(bounds, { padding: [40, 40], maxZoom: OVERVIEW_MAX_ZOOM, animate: false }));
+        return;
+      }
+      case 'center':
+        guarded(() => map.setView([action.at.lat, action.at.lon], action.zoom, { animate: false }));
+        return;
+      case 'pan':
+        // Same zoom: an animated pan fires only movestart, which never pauses following.
+        map.panTo([action.at.lat, action.at.lon]);
+        return;
+      case 'showAll':
+        selection.showAll(); // its listener restyles, fits and updates the control
+        return;
     }
-    for (const track of Object.values(snapshot.tracks)) {
-      for (const p of track) points.push([p.lat, p.lon]);
-    }
-    if (points.length === 0) return;
-    fitted = true;
-    map.fitBounds(L.latLngBounds(points), { padding: [40, 40], maxZoom: 16 });
+  }
+
+  function runners(): RunnerView[] {
+    return store.getState().snapshot?.runners ?? [];
+  }
+
+  function updateRecenter(): void {
+    recenter.setVisible(recenterVisible(selection.get(), selectedView()));
   }
 
   store.subscribe(({ snapshot }) => {
-    if (snapshot) sync(snapshot);
+    if (!snapshot) return;
+    sync(snapshot);
+    const plan = planStoreChange(selection.get(), snapshot.runners, map.getZoom(), camera);
+    run(plan);
+    if (plan.action.kind !== 'showAll') updateRecenter();
   });
 
-  selection.subscribe((runnerId) => {
+  let previous: SelectionState = selection.get();
+  selection.subscribe((state) => {
     for (const [id, entry] of layers) style(id, entry);
-    if (runnerId === null) return;
-    const position = store.getState().snapshot?.runners.find((r) => r.runnerId === runnerId)?.lastPosition;
-    if (position) map.panTo([position.lat, position.lon]);
+    const plan = planSelectionChange(previous, state, runners(), map.getZoom(), camera);
+    previous = state;
+    run(plan);
+    updateRecenter();
   });
+}
+
+type RecenterControl = L.Control & { setVisible: (visible: boolean) => void };
+
+function createRecenterControl(onPress: () => void): RecenterControl {
+  const container = L.DomUtil.create('div', 'leaflet-bar recenter-control');
+  const button = L.DomUtil.create('button', 'recenter-button', container);
+  button.type = 'button';
+  button.textContent = 'Re-center';
+  button.title = 'Follow the selected runner again';
+  L.DomEvent.disableClickPropagation(container);
+  L.DomEvent.disableScrollPropagation(container);
+  L.DomEvent.on(button, 'click', () => onPress());
+  container.hidden = true;
+
+  const control = new L.Control({ position: 'topleft' }) as RecenterControl;
+  control.onAdd = () => container;
+  control.setVisible = (visible) => {
+    container.hidden = !visible;
+  };
+  return control;
 }

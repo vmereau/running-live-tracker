@@ -1,20 +1,51 @@
-// The runner a spectator picked out (list tap or marker tap). Shared by the
-// map and the list; it is view state only, never part of the live store.
+// The spectator's view mode, shared by the map and the list: "All runners"
+// (selectedId null) or one selected runner that the map follows or not.
+// View state only: never part of the live store, the URL or localStorage.
+export type SelectionState = {
+  selectedId: string | null;
+  /** Always false while nothing is selected. */
+  following: boolean;
+};
+
+export type SelectionListener = (state: SelectionState) => void;
+
 export type Selection = {
-  get: () => string | null;
-  /** Selects the runner, or clears the selection when it is already selected. */
-  toggle: (runnerId: string) => void;
-  subscribe: (listener: (runnerId: string | null) => void) => void;
+  get: () => SelectionState;
+  /** Selects the runner and (re)starts following, even when it is already selected. */
+  select: (runnerId: string) => void;
+  /** Back to the overview: clears the selection and stops following. */
+  showAll: () => void;
+  /** Stops following the selected runner (hand pan or zoom); no-op without a selection. */
+  pauseFollow: () => void;
+  /** Follows the selected runner again (Re-center); no-op without a selection. */
+  resumeFollow: () => void;
+  /** Called after every real change with the new state. */
+  subscribe: (listener: SelectionListener) => void;
 };
 
 export function createSelection(): Selection {
-  let selected: string | null = null;
-  const listeners: ((runnerId: string | null) => void)[] = [];
+  let state: SelectionState = { selectedId: null, following: false };
+  const listeners: SelectionListener[] = [];
+
+  function set(next: SelectionState): void {
+    if (next.selectedId === state.selectedId && next.following === state.following) return;
+    state = next;
+    for (const listener of listeners) listener(state);
+  }
+
   return {
-    get: () => selected,
-    toggle(runnerId) {
-      selected = selected === runnerId ? null : runnerId;
-      for (const listener of listeners) listener(selected);
+    get: () => state,
+    select(runnerId) {
+      set({ selectedId: runnerId, following: true });
+    },
+    showAll() {
+      set({ selectedId: null, following: false });
+    },
+    pauseFollow() {
+      if (state.selectedId !== null) set({ selectedId: state.selectedId, following: false });
+    },
+    resumeFollow() {
+      if (state.selectedId !== null) set({ selectedId: state.selectedId, following: true });
     },
     subscribe(listener) {
       listeners.push(listener);

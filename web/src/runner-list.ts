@@ -1,13 +1,14 @@
-// Compact runner list overlay: color swatch, name, status and a ticking
-// "last update" age per runner, a stats line (ticking elapsed time, then the
-// server's distance and paces, only formatted here), a detail line for the selected runner, and the
-// connection banner. Rows are keyed and updated in place so a tap is never
-// lost to a re-render.
+// Compact runner list overlay: an "All runners" button (pressed in the
+// overview), a stats block for the selected runner, then per runner a color
+// swatch, name, status, a ticking "last update" age and a stats line (ticking
+// elapsed time, then the server's distance and paces, only formatted here),
+// plus the connection banner. Rows are keyed and updated in place so a tap is
+// never lost to a re-render.
 import type { Snapshot } from '@running-live-tracker/shared';
 import type { Store } from './store.ts';
 import type { Selection } from './selection.ts';
 import type { ConnectionStatus } from './live-client.ts';
-import { ageMs, formatAge, runnerStatsText, statusLabel } from './format.ts';
+import { ageMs, formatAge, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
 
 const TICK_MS = 1_000;
 const FALLBACK_COLOR = '#555555';
@@ -35,11 +36,20 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ''): HTML
 
 export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: Store, selection: Selection): RunnerList {
   const title = el('div', 'panel-title');
+  const allButton = el('button', 'all-runners');
+  allButton.type = 'button';
+  allButton.textContent = 'All runners';
+  allButton.addEventListener('click', () => selection.showAll());
   const detail = el('div', 'panel-detail');
+  const detailTitle = el('div', 'detail-title');
+  const detailNote = el('div', 'detail-note');
+  detailNote.textContent = 'Not started yet';
+  const detailStats = el('dl', 'detail-stats');
+  detail.append(detailTitle, detailNote, detailStats);
+  detail.hidden = true;
   const list = el('ul', 'runner-list');
   title.textContent = 'Live runners';
-  detail.hidden = true;
-  root.replaceChildren(title, detail, list);
+  root.replaceChildren(title, allButton, detail, list);
 
   const rows = new Map<string, Row>();
 
@@ -70,7 +80,7 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
     stats.append(elapsed, ' · ', distance, ' · now ', currentPace, ' · avg ', avgPace);
     text.append(name, meta, stats);
     button.append(swatch, text);
-    button.addEventListener('click', () => selection.toggle(runnerId));
+    button.addEventListener('click', () => selection.select(runnerId));
     item.append(button);
     return { item, button, swatch, name, status, age, elapsed, distance, currentPace, avgPace };
   }
@@ -89,19 +99,38 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
     }
   }
 
-  function renderDetail(): void {
+  /** The selected runner's stats block (server values formatted; elapsed and age tick). */
+  function renderStats(): void {
     const snapshot = store.getState().snapshot;
-    const selected = selection.get();
-    const view = snapshot?.runners.find((r) => r.runnerId === selected);
+    const { selectedId } = selection.get();
+    const view = snapshot?.runners.find((r) => r.runnerId === selectedId);
     if (!snapshot || !view) {
       detail.hidden = true;
-      detail.textContent = '';
-    } else {
-      detail.hidden = false;
-      detail.textContent = `${displayName(snapshot, view.runnerId)} · ${statusLabel(view.status)}`;
+      return;
     }
+    const text = selectedPanelText(view, displayName(snapshot, view.runnerId), store.now());
+    detail.hidden = false;
+    detailTitle.textContent = text.title;
+    detailNote.hidden = !text.notStarted;
+    // Rebuilt on every render: the block holds no controls, so no tap can be lost.
+    const cells: HTMLElement[] = [];
+    for (const [label, value] of text.rows) {
+      const dt = el('dt');
+      const dd = el('dd');
+      dt.textContent = label;
+      dd.textContent = value;
+      cells.push(dt, dd);
+    }
+    detailStats.replaceChildren(...cells);
+  }
+
+  function renderDetail(): void {
+    const { selectedId } = selection.get();
+    allButton.setAttribute('aria-pressed', String(selectedId === null));
+    allButton.classList.toggle('selected', selectedId === null);
+    renderStats();
     for (const [id, row] of rows) {
-      const isSelected = id === selected;
+      const isSelected = id === selectedId;
       row.button.classList.toggle('selected', isSelected);
       row.button.setAttribute('aria-pressed', String(isSelected));
     }
@@ -143,7 +172,11 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
     if (snapshot) render(snapshot);
   });
   selection.subscribe(renderDetail);
-  setInterval(renderTicking, TICK_MS);
+  renderDetail();
+  setInterval(() => {
+    renderTicking();
+    renderStats();
+  }, TICK_MS);
 
   return {
     setConnection(status) {
