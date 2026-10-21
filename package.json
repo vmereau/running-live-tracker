@@ -16,6 +16,7 @@
     "simulate": "node server/scripts/simulate-runner.ts",
     "backup": "node server/scripts/backup.ts",
     "race-check": "node server/scripts/race-check.ts",
+    "session-report": "node server/scripts/session-report.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

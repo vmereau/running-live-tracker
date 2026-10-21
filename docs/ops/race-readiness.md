@@ -3,7 +3,8 @@
 The race depends on one Windows PC at home: the tracker server (one Node process) and the
 Tailscale daemon must stay up for the whole race and come back on their own after a reboot
 or a crash, with nobody touching the PC (AD-14). This runbook covers the one-time setup, the
-reboot test, `pnpm race-check`, the logs and the race-week checklist.
+reboot test, `pnpm race-check`, the logs, `pnpm session-report`, the public dry run, the
+phone soak test and the race-week checklist.
 
 Related notes: [tailscale-funnel.md](tailscale-funnel.md) (public access through Funnel) and
 [events-and-backups.md](events-and-backups.md) (test-run and race configs, switching, backups).
@@ -188,6 +189,147 @@ Get-Content data\logs\supervisor.log -Tail 20
 Get-Content data\logs\server-2026-11-08.log -Wait -Tail 20     # follow the live log
 ```
 
+## `pnpm session-report`
+
+The server-side proof for the dry run and the soak test: a read-only report of what the
+fix log holds for each session. It reads `<DATA_DIR>\tracker.db` directly (read-only, safe while
+the server runs) and the event config for the window and the runner names. No HTTP calls.
+
+```powershell
+pnpm session-report                                           # sessions of EVENT_CONFIG / config\event.json
+pnpm session-report --config config\event.test-run.json       # sessions started in that event's window
+pnpm session-report --config config\event.test-run.json --session <sessionId>   # one session, any start time
+pnpm session-report --config config\event.dry-run.json --gap 10s
+```
+
+`--config` and `DATA_DIR` default as for the server. A session is in the report when its
+`sessionStartedAt` is in `[opensAt, closesAt]` of the config, ordered by start. One block per
+session, then a summary line:
+
+| Line | What |
+| --- | --- |
+| header | runner display name (the raw `runnerId` when not in the config), `sessionId`, verdict |
+| `started` | `sessionStartedAt` (Start pressed on the phone) |
+| `fixes` | number of fixes, first → last fix time and the time between them |
+| `distance` | km along the stored fixes (raw GPS, not snapped to the course) |
+| `end` | time of the `end` record, or `not received` |
+| `missing` | seq ranges absent from `0..` the highest stored seq, e.g. `12..15, 40` |
+| `max gap` | longest time between two consecutive fixes |
+| `track gaps > …` | consecutive fixes more than `--gap` apart (by recorded time): **no position was recorded** (no GPS fix, app killed, phone off) |
+| `upload gaps > …` | consecutive records received more than `--gap` apart (by server time): **nothing reached the server** (no mobile data); the backlog came later |
+| `max upload` | largest delay between a record being recorded on the phone and received by the server |
+
+All times are UTC. The verdict is `COMPLETE` when no seq is missing and `end` was received,
+`INCOMPLETE` when seqs are missing (records lost), `INCOMPLETE (no end)` when `end` has not
+arrived (still running, or Stop not uploaded yet). Gaps never change the verdict: whether each one
+matches a place without signal is for the runner to judge. Exit code 0 only when every reported
+session is `COMPLETE`; 1 otherwise, and also when no session is in the window
+(`no sessions in <eventId> window (<from> – <to>)`), for an unknown `--session`, a missing DB or a
+bad config.
+
+`--gap` defaults to `30s`: the phone and `pnpm simulate` record a fix every 5 s
+(`FIX_INTERVAL_MS = 5_000`) and the phone uploads every 10 s, so 30 s is several missed fixes or
+uploads, not jitter. With `pnpm simulate --time-scale N` the fixes are stamped in simulated time:
+`track gaps` and `max upload` mean nothing there, and an offline `--gap` keeps recording fixes, so
+it shows as an `upload gap` of `duration / N` of wall time. Pass a smaller `--gap` then (`10s` for
+the dry run below).
+
+## Public dry run
+
+The whole pipeline through the public URL, with `pnpm simulate` as the runners and a phone on
+mobile data as the spectator. Do it once in race week, and **repeat it the day before the race**.
+
+1. **Make a dry-run config.** Copy the race config to `config/event.dry-run.json` (git-ignored, see
+   [events-and-backups.md](events-and-backups.md#two-configs)) and change only:
+   - `eventId`: its own, e.g. `dry-run-2026-11-07`;
+   - `opensAt` / `closesAt`: a window covering the dry run (e.g. now − 1 h to now + 4 h) and
+     **disjoint from the race and test-run windows**. A session belongs to the event its start time
+     falls in: run under the race config's window, the dry run's sessions would land in the race.
+
+   Keep the same runners, keys and `coursePath`, so the page looks like race day.
+2. **Run the task with it**: register the task with `-EventConfig config\event.dry-run.json` and
+   restart it, as in *Switching events* under [Register the logon task](#3-register-the-logon-task).
+   `pnpm race-check --base-url https://<host>.<tailnet>.ts.net --config config\event.dry-run.json`
+   is all `PASS`.
+3. **Phone**: Wi-Fi off, Tailscale app off, open `https://<host>.<tailnet>.ts.net/`.
+4. **Simulate every runner** (from the PC or any machine), with every runner's key:
+
+   ```powershell
+   pnpm -s simulate --base-url https://<host>.<tailnet>.ts.net --gpx config\courses\race.gpx `
+     --key=<runner-1-key> --key=<runner-2-key> --time-scale 10 --stagger 1m --gap 10m+5m
+   ```
+
+   Write `--key=<key>`, not `--key <key>`: a key can start with `-`, and the second form then
+   fails with "argument is ambiguous". It ends with `simulation done: every record acked` (exit 0). At 10× a marathon at the default
+   pace takes about 20–25 min of wall time.
+5. **Tick on the phone** while it runs:
+   - [ ] a marker and a track per runner, in the runner's color, moving along the course;
+   - [ ] stats update (pace, distance, last-update age);
+   - [ ] course progress (km done out of total km) and the estimated finish time;
+   - [ ] switching runners in the list shows the other runner's figures;
+   - [ ] during the 5 min simulated gap (30 s of wall time) the runner's last-update age grows, then
+         the gap in the track **fills in** when it ends;
+   - [ ] the page never needed a reload, up to each runner's finish.
+6. **Server side**: `pnpm session-report --config config\event.dry-run.json --gap 10s`: every
+   session `COMPLETE`, each with an `upload gap` of about 30 s at the simulated gap, exit 0.
+7. **Switch back to the race config**: register the task with `-EventConfig config\event.race.json`,
+   restart it, and `pnpm race-check --base-url https://<host>.<tailnet>.ts.net` is all `PASS` with the
+   race `eventId`.
+
+Results:
+
+| Date | Tailscale version | Phone / browser / carrier | Pass / fail | Notes |
+| --- | --- | --- | --- | --- |
+| | | | | |
+| *(repeat the day before the race)* | | | | |
+
+## Phone soak test
+
+Each runner's own phone tracks for at least 5 h pocketed with the screen locked, and the server
+ends up with the whole track and nothing left in the phone's outbox. Run it under the **test-run
+config** (the task running `config\event.test-run.json`, its window covering the soak), never the
+race config.
+
+Before, on the phone:
+
+1. App installed (release APK). Settings: the public URL and that runner's key; *Test connection*
+   shows `Connected — event <test-run eventId>`.
+2. Permissions screen all granted, including **No battery optimization** for the app.
+3. Vendor settings, which Android's battery-optimization switch does not cover. Check those of
+   the phone's brand (menus move between versions: search the settings for the words):
+   - **Samsung**: *Settings → Battery → Background usage limits*: add the app to **Never sleeping
+     apps**, and check it is not in *Sleeping* / *Deep sleeping apps*. App info → *Battery* →
+     **Unrestricted**.
+   - **Xiaomi / Redmi / POCO**: app info → **Autostart** on, *Battery saver* → **No restrictions**.
+     Lock the app in recents.
+   - **Huawei / Honor**: *Battery → App launch*: turn off *Manage automatically* for the app
+     (**manual**), with auto-launch, secondary launch and run in background on.
+   - **OnePlus / Oppo / realme**: app info → *Battery* → **Allow background activity** /
+     *Don't optimize*; turn off *Sleep standby optimization* and *Optimize battery use* for the app
+     if present.
+   - Others: [dontkillmyapp.com](https://dontkillmyapp.com) for the brand.
+4. Phone charged (note the %), battery saver off.
+
+The test:
+
+1. Press **Start**, lock the screen, put the phone in a pocket (a run, a walk or a day out, ideally
+   passing places without signal).
+2. After **≥ 5 h**, unlock and press **Stop**. Note the battery %.
+3. Wait until **Pending** on the main screen reaches **0**: the outbox is empty and the
+   "Uploading N pending" notification is gone. If it does not, note the value and keep the phone
+   on a network.
+4. On the PC: `pnpm session-report --config config\event.test-run.json` (or `--session <id>`):
+   the session is `COMPLETE`, the fixes span ≥ 5 h, and every `track gap` and `upload gap` is at a
+   time when the phone had no GPS or no signal (tunnel, underground, dead zone). A gap anywhere else
+   means the phone stopped the app: fix the vendor settings and redo the test.
+
+Results (one row per runner phone):
+
+| Runner | Phone / Android version | Date | Duration | Battery start → end % | Gaps and their cause | Vendor settings needed | Pass / fail |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| | | | | | | | |
+| | | | | | | | |
+
 ## Race-week checklist
 
 The checks `race-check` cannot automate. Tick them in race week, and again the day before:
@@ -201,6 +343,10 @@ The checks `race-check` cannot automate. Tick them in race week, and again the d
 - [ ] `pnpm race-check --base-url https://<host>.<tailnet>.ts.net` all `PASS`, and the phone on
       mobile data gets 200 from `/api/v1/health`.
 - [ ] Backup taken (`pnpm backup`, see [events-and-backups.md](events-and-backups.md#backup)).
-- [ ] Public-URL `pnpm simulate` dry run with a phone browser watching, the day before.
+- [ ] [Public dry run](#public-dry-run) (public-URL `pnpm simulate` with a phone browser watching)
+      passed in race week and again the day before, recorded in its results table, and the task is
+      back on the race config.
+- [ ] [Phone soak test](#phone-soak-test) passed on every runner's phone, recorded in its results
+      table, with the vendor battery settings it needed still set.
 - [ ] Race morning, after switching to the race config: `pnpm race-check --base-url https://<host>.<tailnet>.ts.net`
       again, all `PASS`.

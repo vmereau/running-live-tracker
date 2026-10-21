@@ -31,3 +31,7 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-5-estimated-finish-time.md`
   summary: Add a test for the runner-list row's ETA span (` · finish ≈ HH:mm` shown when `runnerRowText().eta` is set, hidden and empty when null).
   evidence: No test imports `web/src/runner-list.ts`; dropping the `row.eta.hidden` assignment or not appending the span passes `pnpm check`. Same DOM-harness gap as the 3.2 and 3.4 runner-list items.
+
+- source_spec: `_bmad-output/implementation-artifacts/spec-4-3-public-dry-run-and-phone-soak-test.md`
+  summary: `server/src/main.test.ts` "simulator end to end" is flaky, and `pnpm simulate --key <k>` fails for any key that starts with `-` (about 1 in 64 base64url keys).
+  evidence: The test spawns the simulator with `--key`, `<random key>`. When the key starts with `-`, `parseArgs` throws "Option '--key' argument is ambiguous". This was seen once in `pnpm check` during story 4.3. Fix: have the test pass `--key=<k>`, or have keygen re-draw keys that start with `-`. The 4.3 runbook already uses `--key=<k>`.
