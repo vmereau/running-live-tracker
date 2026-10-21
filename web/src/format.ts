@@ -1,6 +1,6 @@
 // Display formatting for the map page. Ages and elapsed time are the only derived
-// numbers the page computes (AD-2); distance, paces and course progress come from
-// the server as-is.
+// numbers the page computes (AD-2); distance, paces, course progress and the ETA
+// come from the server as-is (the projected time is only etaAt − runStartedAt).
 import type { RunnerStatus, RunnerView } from '@running-live-tracker/shared';
 
 const EM_DASH = '—';
@@ -96,6 +96,25 @@ export function progressText(view: ProgressFields, lengthM: number | null): Prog
   };
 }
 
+/** Local clock time HH:mm, rounded to the nearest minute (23:59:40 → "00:00"). */
+export function formatClock(epochMs: number): string {
+  const d = new Date(Math.round(epochMs / 60_000) * 60_000);
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+}
+
+export type EtaText = {
+  /** Local finish clock time "HH:mm". */
+  clock: string;
+  /** Projected finishing time etaAt − runStartedAt, "h:mm:ss" like elapsed. */
+  projected: string;
+};
+
+/** The server's ETA formatted; null when etaAt or runStartedAt is null or the runner isn't active. */
+export function etaText(view: Pick<RunnerView, 'status' | 'etaAt' | 'runStartedAt'>): EtaText | null {
+  if (view.status !== 'active' || view.etaAt === null || view.runStartedAt === null) return null;
+  return { clock: formatClock(view.etaAt), projected: formatElapsed(view.etaAt - view.runStartedAt) };
+}
+
 export type RunnerRowText = {
   /** "X.X / Y.Y km" with progress, else the distance "X.X km". */
   distance: string;
@@ -105,20 +124,25 @@ export type RunnerRowText = {
   progress: ProgressText | null;
   /** Shows the "off course" badge: only alongside progress. */
   offCourse: boolean;
+  /** "finish ≈ HH:mm" at the end of the progress line; null hides it. */
+  eta: string | null;
 };
 
 /** The course-dependent part of a runner row; `lengthM` is snapshot.event.lengthM. */
 export function runnerRowText(
-  view: ProgressFields & Pick<RunnerView, 'runStartedAt' | 'runEndedAt' | 'distanceM' | 'currentPaceSPerKm' | 'avgPaceSPerKm' | 'offCourse'>,
+  view: ProgressFields &
+    Pick<RunnerView, 'status' | 'etaAt' | 'runStartedAt' | 'runEndedAt' | 'distanceM' | 'currentPaceSPerKm' | 'avgPaceSPerKm' | 'offCourse'>,
   lengthM: number | null,
   now: number,
 ): RunnerRowText {
   const progress = progressText(view, lengthM);
+  const eta = etaText(view);
   return {
     distance: progress?.done ?? runnerStatsText(view, now).distance,
     distanceTitle: progress ? 'distance on course / course length' : 'distance',
     progress,
     offCourse: progress !== null && view.offCourse,
+    eta: eta === null ? null : `finish ≈ ${eta.clock}`,
   };
 }
 
@@ -136,7 +160,8 @@ export type SelectedPanelText = {
 /**
  * The stats block of the selected runner: server values formatted, elapsed and age
  * measured against `now`. With progress (`lengthM` is snapshot.event.lengthM), the
- * distance reads "X.X / Y.Y km" and Remaining and Complete rows follow it.
+ * distance reads "X.X / Y.Y km" and Remaining and Complete rows follow it, then the
+ * ETA rows while the server sends one. A stopped runner's Elapsed reads "Final time".
  */
 export function selectedPanelText(view: RunnerView, name: string, lengthM: number | null, now: number): SelectedPanelText {
   const title = `${name} · ${statusLabel(view.status)}`;
@@ -152,13 +177,21 @@ export function selectedPanelText(view: RunnerView, name: string, lengthM: numbe
         ['Complete', progress.percent],
       ]
     : [['Distance', stats.distance]];
+  const eta = etaText(view);
+  const etaRows: [string, string][] = eta
+    ? [
+        ['Finish ≈', eta.clock],
+        ['Projected time', eta.projected],
+      ]
+    : [];
   return {
     title,
     notStarted: false,
     offCourse: progress !== null && view.offCourse,
     rows: [
-      ['Elapsed', stats.elapsed],
+      [view.status === 'stopped' ? 'Final time' : 'Elapsed', stats.elapsed],
       ...distanceRows,
+      ...etaRows,
       ['Current pace', stats.currentPace],
       ['Average pace', stats.avgPace],
       lastUpdate,

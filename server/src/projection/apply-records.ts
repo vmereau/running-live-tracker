@@ -7,6 +7,7 @@ import { avgPaceSPerKm, currentPaceSPerKm, currentPaceWindowStart, segmentDistan
 import type { PaceSample } from '../domain/stats.ts';
 import type { Course } from '../domain/course.ts';
 import { advanceProgress, startProgress } from '../domain/progress.ts';
+import { etaAt } from '../domain/eta.ts';
 import type { CourseProgress } from '../domain/progress.ts';
 import { initialRunnerView } from './snapshot.ts';
 
@@ -159,6 +160,9 @@ export function toRunnerView(state: RunnerState, course: Course | null = null): 
   const elapsedS = state.runStartedAt === null || state.lastFixAt === null ? 0 : (state.lastFixAt - state.runStartedAt) / 1000;
   const progress = course === null ? null : state.progress;
   const paceM = course === null ? state.distanceM : paceDistanceM(state);
+  const distanceM = course === null ? state.distanceM : (progress?.progressM ?? 0);
+  const remainingM = progress === null ? null : Math.max(0, course!.lengthM - progress.progressM);
+  const avgPace = avgPaceSPerKm(elapsedS, paceM);
   return {
     ...initialRunnerView(state.runnerId),
     status: state.status,
@@ -167,12 +171,13 @@ export function toRunnerView(state: RunnerState, course: Course | null = null): 
     lastFixAt: state.lastFixAt,
     lastReceivedAt: state.lastReceivedAt,
     lastPosition: state.lastPosition === null ? null : { ...state.lastPosition },
-    distanceM: course === null ? state.distanceM : (progress?.progressM ?? 0),
+    distanceM,
     progressM: progress?.progressM ?? null,
-    remainingM: progress === null ? null : Math.max(0, course!.lengthM - progress.progressM),
+    remainingM,
     progressFraction: progress === null ? null : Math.min(1, progress.progressM / course!.lengthM),
     offCourse: progress?.offCourse ?? false,
-    avgPaceSPerKm: avgPaceSPerKm(elapsedS, paceM),
+    avgPaceSPerKm: avgPace,
     currentPaceSPerKm: state.status === 'stopped' ? null : currentPaceSPerKm(state.paceSamples),
+    etaAt: etaAt({ hasCourse: course !== null, status: state.status, distanceM, lastFixAt: state.lastFixAt, remainingM, avgPaceSPerKm: avgPace }),
   };
 }

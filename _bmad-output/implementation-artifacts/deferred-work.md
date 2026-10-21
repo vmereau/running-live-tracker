@@ -28,3 +28,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-4-course-progress.md`
   summary: Add tests for the runner-list DOM wiring (progress line and off-course badge hidden flags, lengthM passed from the snapshot).
   evidence: No test imports `web/src/runner-list.ts`; the display decisions are tested in `format.ts` helpers, but the repo has no DOM test harness to check the assignments.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-5-estimated-finish-time.md`
+  summary: Add a test for the runner-list row's ETA span (` · finish ≈ HH:mm` shown when `runnerRowText().eta` is set, hidden and empty when null).
+  evidence: No test imports `web/src/runner-list.ts`; dropping the `row.eta.hidden` assignment or not appending the span passes `pnpm check`. Same DOM-harness gap as the 3.2 and 3.4 runner-list items.

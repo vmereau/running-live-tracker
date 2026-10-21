@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RunnerView } from '@running-live-tracker/shared';
-import { ageMs, elapsedMs, formatAge, formatDistanceKm, formatElapsed, formatPace, progressText, runnerRowText, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
+import { ageMs, elapsedMs, etaText, formatAge, formatClock, formatDistanceKm, formatElapsed, formatPace, progressText, runnerRowText, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
 
 test('formats ages as seconds below a minute and floored minutes above', () => {
   assert.equal(formatAge(0), '0 s ago');
@@ -130,13 +130,13 @@ test('selectedPanelText: notStarted runner says so and shows only the last updat
   });
 });
 
-test('selectedPanelText: stopped runner shows the final elapsed time and no current pace', () => {
+test('selectedPanelText: stopped runner shows the final time and no current pace', () => {
   const view = runnerView({ status: 'stopped', runEndedAt: 31_000, currentPaceSPerKm: null });
   const text = selectedPanelText(view, 'Carol', null, 999_000);
   assert.equal(text.title, 'Carol · stopped');
   assert.equal(text.notStarted, false);
   assert.deepStrictEqual(text.rows.slice(0, 4), [
-    ['Elapsed', '0:00:30'],
+    ['Final time', '0:00:30'],
     ['Distance', '2.3 km'],
     ['Current pace', '—'],
     ['Average pace', '5:02 /km'],
@@ -185,12 +185,13 @@ test('runnerRowText: with a course the distance reads done / total, plus the pro
     distanceTitle: 'distance on course / course length',
     progress: { done: '4.5 / 10.0 km', remaining: '5.5 km', percent: '45 %' },
     offCourse: false,
+    eta: null,
   });
   assert.equal(runnerRowText(runnerView({ ...onCourse, offCourse: true }), 10_000, 61_000).offCourse, true);
 });
 
 test('runnerRowText: without a course, or without progress yet, only the distance and no badge', () => {
-  const plain = { distance: '2.3 km', distanceTitle: 'distance', progress: null, offCourse: false };
+  const plain = { distance: '2.3 km', distanceTitle: 'distance', progress: null, offCourse: false, eta: null };
   assert.deepStrictEqual(runnerRowText(runnerView({}), null, 61_000), plain);
   assert.deepStrictEqual(runnerRowText(runnerView({ offCourse: true }), null, 61_000), plain);
   // Course, but no progress (not started): nothing shown as 0.
@@ -220,4 +221,56 @@ test('selectedPanelText: without a course or progress, no progress rows and no b
   const noProgress = selectedPanelText(runnerView({ offCourse: true }), 'Alice', 10_000, 61_000);
   assert.equal(noProgress.offCourse, false);
   assert.deepStrictEqual(noProgress.rows[1], ['Distance', '2.3 km']);
+});
+
+// ---- estimated finish time (Story 3.5) ----
+
+// Local times: the page shows the browser's clock, so the expectations use it too.
+const etaAt = new Date(2026, 9, 21, 12, 41, 40).getTime();
+const startedAt = etaAt - (3 * 3600 + 28 * 60 + 15) * 1000;
+const withEta = { ...onCourse, etaAt, runStartedAt: startedAt, lastFixAt: startedAt + 1_200_000, lastReceivedAt: startedAt + 1_200_000 };
+
+test('formatClock: local HH:mm rounded to the nearest minute', () => {
+  assert.equal(formatClock(new Date(2026, 9, 21, 12, 41, 0).getTime()), '12:41');
+  assert.equal(formatClock(new Date(2026, 9, 21, 12, 41, 29).getTime()), '12:41');
+  assert.equal(formatClock(new Date(2026, 9, 21, 12, 41, 30).getTime()), '12:42');
+  assert.equal(formatClock(new Date(2026, 9, 21, 9, 5, 10).getTime()), '09:05');
+  assert.equal(formatClock(new Date(2026, 9, 21, 23, 59, 40).getTime()), '00:00');
+});
+
+test('etaText: clock and projected time; null without etaAt, without runStartedAt, or unless active', () => {
+  assert.deepStrictEqual(etaText(runnerView(withEta)), { clock: '12:42', projected: '3:28:15' });
+  assert.equal(etaText(runnerView({ ...withEta, etaAt: null })), null);
+  assert.equal(etaText(runnerView({ ...withEta, runStartedAt: null })), null);
+  assert.equal(etaText(runnerView({ ...withEta, status: 'stopped' })), null);
+  assert.equal(etaText(runnerView({ ...withEta, status: 'notStarted' })), null);
+});
+
+test('runnerRowText: "finish ≈ HH:mm" with an ETA, null without', () => {
+  assert.equal(runnerRowText(runnerView(withEta), 10_000, startedAt + 1_200_000).eta, 'finish ≈ 12:42');
+  assert.equal(runnerRowText(runnerView({ ...withEta, etaAt: null }), 10_000, startedAt + 1_200_000).eta, null);
+  assert.equal(runnerRowText(runnerView({ ...withEta, status: 'stopped', runEndedAt: startedAt + 1_200_000 }), 10_000, startedAt + 1_200_000).eta, null);
+});
+
+test('selectedPanelText: Finish ≈ and Projected time after Complete; hidden without an ETA', () => {
+  const text = selectedPanelText(runnerView(withEta), 'Alice', 10_000, startedAt + 1_201_000);
+  assert.deepStrictEqual(text.rows, [
+    ['Elapsed', '0:20:01'],
+    ['Distance', '4.5 / 10.0 km'],
+    ['Remaining', '5.5 km'],
+    ['Complete', '45 %'],
+    ['Finish ≈', '12:42'],
+    ['Projected time', '3:28:15'],
+    ['Current pace', '4:58 /km'],
+    ['Average pace', '5:02 /km'],
+    ['Last update', '1 s ago'],
+  ]);
+  const noEta = selectedPanelText(runnerView({ ...withEta, etaAt: null }), 'Alice', 10_000, startedAt + 1_201_000);
+  assert.deepStrictEqual(noEta.rows.map(([label]) => label), ['Elapsed', 'Distance', 'Remaining', 'Complete', 'Current pace', 'Average pace', 'Last update']);
+});
+
+test('selectedPanelText: a stopped runner reads Final time, with no ETA rows', () => {
+  const stopped = runnerView({ ...withEta, status: 'stopped', etaAt: null, runEndedAt: startedAt + 1_200_000, currentPaceSPerKm: null });
+  const labels = selectedPanelText(stopped, 'Alice', 10_000, startedAt + 9_999_000).rows.map(([label]) => label);
+  assert.deepStrictEqual(labels, ['Final time', 'Distance', 'Remaining', 'Complete', 'Current pace', 'Average pace', 'Last update']);
 });

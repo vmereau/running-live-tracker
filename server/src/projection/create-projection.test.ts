@@ -314,7 +314,7 @@ for (const [mode, course] of [
   ['in-order', fixPatternCourse],
 ] as const) {
   test(`live state equals a fresh replay over seeded random batch orders (${mode}, ${course ? 'course' : 'no course'})`, () => {
-    const seen = { distance: 0, avgPace: 0, currentPace: 0, progress: 0, offCourse: 0 };
+    const seen = { distance: 0, avgPace: 0, currentPace: 0, progress: 0, offCourse: 0, eta: 0 };
     for (let seed = 1; seed <= 60; seed++) {
       const random = rng(seed);
       const a1 = { runnerId: 'alice', sessionId: S1, sessionStartedAt: 20_000 };
@@ -349,6 +349,7 @@ for (const [mode, course] of [
           if (v.currentPaceSPerKm !== null) seen.currentPace++;
           if (v.progressM !== null && v.progressM > 0) seen.progress++;
           if (v.offCourse) seen.offCourse++;
+          if (v.etaAt !== null) seen.eta++;
         }
         if (mode === 'in-order') assert.ok(changes.every((c) => !c.trackReset), `seed ${seed}: no reset for in-order sessions`);
       } finally {
@@ -357,8 +358,8 @@ for (const [mode, course] of [
     }
     // The comparison covers non-trivial stats, not just their defaults.
     assert.ok(seen.distance > 0 && seen.avgPace > 0 && seen.currentPace > 0, JSON.stringify(seen));
-    if (course) assert.ok(seen.progress > 0 && seen.offCourse > 0, JSON.stringify(seen));
-    else assert.ok(seen.progress === 0 && seen.offCourse === 0, JSON.stringify(seen));
+    if (course) assert.ok(seen.progress > 0 && seen.offCourse > 0 && seen.eta > 0, JSON.stringify(seen));
+    else assert.ok(seen.progress === 0 && seen.offCourse === 0 && seen.eta === 0, JSON.stringify(seen));
   });
 }
 

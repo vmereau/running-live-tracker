@@ -80,6 +80,23 @@ test('out-and-back: ≈ 40 % at 40 %, ≈ lengthM at the end, never on the retur
   near(views.at(-1)!.currentPaceSPerKm, PACE_S_PER_KM, PACE_S_PER_KM * 0.02, 'currentPace');
 });
 
+test('out-and-back ETA at 5:00 /km: null before 1 km, then ≈ runStartedAt + lengthM × 0.3 s', () => {
+  const c = course('out-and-back.gpx');
+  const records = simulate(c, 0, c.lengthM);
+  const views = foldAll(records, c);
+  const expected = records[0]!.recordedAt + c.lengthM * (PACE_S_PER_KM / 1000) * 1000;
+  let withEta = 0;
+  for (const [i, v] of views.entries()) {
+    if (v.distanceM < 1000) {
+      assert.equal(v.etaAt, null, `fix ${i} at ${v.distanceM} m`);
+      continue;
+    }
+    withEta++;
+    near(v.etaAt, expected, c.lengthM * (PACE_S_PER_KM / 1000) * 1000 * 0.01, `ETA at fix ${i}`);
+  }
+  assert.ok(withEta > 0);
+});
+
 test('lap: ≈ 100 m at 100 m (never ≈ lengthM), ≈ lengthM at the end', () => {
   const c = course('lap.gpx');
   const records = simulate(c, 0, c.lengthM);
@@ -129,7 +146,7 @@ test('2 km gap on out-and-back [100, 2150]: the grown window lands on the return
   for (const v of views) assert.equal(v.offCourse, false);
 });
 
-test('no course: progress fields null, offCourse false, distance the raw sum', () => {
+test('no course: progress fields and ETA null, offCourse false, distance the raw sum', () => {
   const c = course('out-and-back.gpx');
   const views = foldAll(simulate(c, 0, c.lengthM), null);
   for (const v of views) {
@@ -137,6 +154,7 @@ test('no course: progress fields null, offCourse false, distance the raw sum', (
     assert.equal(v.remainingM, null);
     assert.equal(v.progressFraction, null);
     assert.equal(v.offCourse, false);
+    assert.equal(v.etaAt, null);
   }
   near(views.at(-1)!.distanceM, c.lengthM, c.lengthM * 0.01, 'distanceM');
 });

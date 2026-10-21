@@ -344,3 +344,34 @@ test('progress: a late Start inside the first window counts the start position a
   assert.ok(Math.abs(view.avgPaceSPerKm! - 300) < 3, `avg ${view.avgPaceSPerKm}`);
   assert.ok(Math.abs(view.currentPaceSPerKm! - 300) < 6, `current ${view.currentPaceSPerKm}`);
 });
+
+// ---- estimated finish time (Story 3.5) ----
+
+test('eta: with a course, null before 1000 m, then lastFixAt + remaining × avg pace; null after end', () => {
+  const course = straightCourse(3000);
+  const records = northFixes(0, 1500);
+  let state = initialRunnerState('alice');
+  let sawEta = false;
+  for (const r of records) {
+    state = applyRecords(state, [r], course);
+    const view = RunnerView.parse(toRunnerView(state, course));
+    if (view.distanceM < 1000) {
+      assert.equal(view.etaAt, null, `at ${view.distanceM} m`);
+    } else {
+      sawEta = true;
+      assert.equal(view.etaAt, view.lastFixAt! + Math.round(view.remainingM! * view.avgPaceSPerKm!));
+      // ≈ start + course length at 5:00 /km.
+      assert.ok(Math.abs(view.etaAt! - (1_000_000 + 3000 * 300)) < 3000 * 300 * 0.01, String(view.etaAt));
+    }
+  }
+  assert.ok(sawEta);
+  const stopped = RunnerView.parse(toRunnerView(applyRecords(state, [end(records.length, records.at(-1)!.recordedAt + 1_000)], course), course));
+  assert.equal(stopped.status, 'stopped');
+  assert.equal(stopped.etaAt, null);
+});
+
+test('eta: null without a course', () => {
+  const view = RunnerView.parse(toRunnerView(applyRecords(initialRunnerState('alice'), northFixes(0, 1500))));
+  assert.ok(view.distanceM >= 1000);
+  assert.equal(view.etaAt, null);
+});

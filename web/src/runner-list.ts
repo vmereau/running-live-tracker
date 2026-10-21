@@ -2,7 +2,8 @@
 // overview), a stats block for the selected runner, then per runner a color
 // swatch, name, status, a ticking "last update" age and a stats line (ticking
 // elapsed time, then the server's distance and paces, only formatted here),
-// and with a course a progress line and an "off course" badge, plus the
+// and with a course a progress line (ending in the finish ETA while the server
+// sends one) and an "off course" badge, plus the
 // connection banner. Rows are keyed and updated in place so a tap is
 // never lost to a re-render.
 import type { Snapshot } from '@running-live-tracker/shared';
@@ -29,6 +30,7 @@ type Row = {
   progress: HTMLElement;
   remaining: HTMLElement;
   percent: HTMLElement;
+  eta: HTMLElement;
 };
 
 export type RunnerList = { setConnection: (status: ConnectionStatus) => void };
@@ -98,13 +100,16 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
     const percent = el('span');
     remaining.title = 'remaining';
     percent.title = 'complete';
-    progress.append(remaining, ' left · ', percent);
+    const eta = el('span');
+    eta.title = 'estimated finish time';
+    eta.hidden = true;
+    progress.append(remaining, ' left · ', percent, eta);
     progress.hidden = true;
     text.append(name, meta, stats, progress);
     button.append(swatch, text);
     button.addEventListener('click', () => selection.select(runnerId));
     item.append(button);
-    return { item, button, swatch, name, status, age, elapsed, distance, currentPace, avgPace, offCourse, progress, remaining, percent };
+    return { item, button, swatch, name, status, age, elapsed, distance, currentPace, avgPace, offCourse, progress, remaining, percent, eta };
   }
 
   /** Everything that moves with the clock alone: last-update age and elapsed time. */
@@ -184,6 +189,8 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
       row.progress.hidden = rowText.progress === null;
       row.remaining.textContent = rowText.progress?.remaining ?? '';
       row.percent.textContent = rowText.progress?.percent ?? '';
+      row.eta.hidden = rowText.eta === null;
+      row.eta.textContent = rowText.eta === null ? '' : ` · ${rowText.eta}`;
       // Keep the DOM order equal to the snapshot order, moving rows only when needed.
       const current = list.children[index] ?? null;
       if (current !== row.item) list.insertBefore(row.item, current);
