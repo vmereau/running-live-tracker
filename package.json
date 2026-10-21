@@ -14,6 +14,7 @@
     "dev": "node server/src/main.ts",
     "keygen": "node server/scripts/keygen.ts",
     "simulate": "node server/scripts/simulate-runner.ts",
+    "backup": "node server/scripts/backup.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

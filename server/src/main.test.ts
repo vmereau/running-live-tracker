@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { once } from 'node:events';
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -426,5 +426,132 @@ test('live projection end to end: track then runner after a POST, same snapshot 
     assert.deepStrictEqual({ ...after, serverNow: 0 }, { ...before, serverNow: 0 });
   } finally {
     second.kill();
+  }
+});
+
+const mixedBatch = JSON.parse(
+  readFileSync(join(import.meta.dirname, '..', '..', 'shared', 'fixtures', 'valid', 'ingest-batch.mixed.json'), 'utf8'),
+) as { sessionId: string; sessionStartedAt: number; records: { seq: number; kind: string; recordedAt: number }[] };
+
+/** Another session shaped like the mixed fixture, its records shifted to start at `startedAt`. */
+function sessionBatch(sessionId: string, startedAt: number) {
+  const shift = startedAt - mixedBatch.sessionStartedAt;
+  return {
+    sessionId,
+    sessionStartedAt: startedAt,
+    records: mixedBatch.records.map((r) => ({ ...r, recordedAt: r.recordedAt + shift })),
+  };
+}
+
+/** Writes an event config (example runners, alice's key hash replaced) and returns its path. */
+function writeEventConfig(eventId: string, opensAt: number, closesAt: number, aliceKeyHash: string): string {
+  const example = JSON.parse(readFileSync(exampleConfig, 'utf8')) as EditableConfig & { eventId: string };
+  example.eventId = eventId;
+  example.opensAt = opensAt;
+  example.closesAt = closesAt;
+  example.runners[0]!.keyHash = aliceKeyHash;
+  const path = join(mkdtempSync(join(tmpdir(), `rlt-${eventId}-config-`)), 'event.json');
+  writeFileSync(path, JSON.stringify(example));
+  return path;
+}
+
+/** Boots main, runs `body` against its base URL, then stops it and waits for the exit. */
+async function withServer(env: Record<string, string>, body: (base: string) => Promise<void>) {
+  const port = await freePort();
+  const child = startMain({ ...env, PORT: String(port) });
+  try {
+    await waitForReady(child).ready;
+    await body(`http://127.0.0.1:${port}`);
+  } finally {
+    child.kill();
+    await once(child, 'exit');
+  }
+}
+
+async function postBatch(base: string, key: string, batch: unknown) {
+  const res = await fetch(`${base}/api/v1/ingest`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}` },
+    body: JSON.stringify(batch),
+  });
+  assert.equal(res.status, 200, await res.text());
+}
+
+const fetchSnapshot = async (base: string) => Snapshot.parse(await (await fetch(`${base}/api/v1/snapshot`)).json());
+const recordedAts = (snap: Snapshot, runnerId: string) => (snap.tracks[runnerId] ?? []).map((p) => p.recordedAt);
+
+test('backup end to end: booting a backup copy gives the snapshot from backup time', { timeout: 30_000 }, async () => {
+  const { key, keyHash } = generateKey('alice');
+  const configPath = writeEventConfig('backup-e2e', 1_759_000_000_000, 1_761_000_000_000, keyHash);
+  const dataDir = mkdtempSync(join(tmpdir(), 'rlt-backup-live-'));
+  const later = sessionBatch('7d2e4f1a-3b5c-4d6e-8f70-9a1b2c3d4e5f', 1_760_100_000_000);
+  let atBackup: Snapshot | undefined;
+  let backupPath = '';
+
+  await withServer({ EVENT_CONFIG: configPath, DATA_DIR: dataDir }, async (base) => {
+    await postBatch(base, key, mixedBatch);
+    atBackup = await fetchSnapshot(base);
+    assert.equal(atBackup.tracks['alice']!.length, 2);
+    const res = spawnSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'backup.ts')], {
+      encoding: 'utf8',
+      env: { ...process.env, DATA_DIR: dataDir },
+    });
+    assert.equal(res.status, 0, res.stderr);
+    backupPath = res.stdout.trim();
+    assert.ok(existsSync(backupPath), backupPath);
+    // The server keeps serving and storing after the backup.
+    await postBatch(base, key, later);
+    assert.ok(recordedAts(await fetchSnapshot(base), 'alice').includes(later.records[0]!.recordedAt));
+  });
+
+  const restoredDir = mkdtempSync(join(tmpdir(), 'rlt-backup-restored-'));
+  copyFileSync(backupPath, join(restoredDir, 'tracker.db'));
+  await withServer({ EVENT_CONFIG: configPath, DATA_DIR: restoredDir }, async (base) => {
+    const restored = await fetchSnapshot(base);
+    assert.deepStrictEqual({ ...restored, serverNow: 0 }, { ...atBackup!, serverNow: 0 });
+    for (const r of later.records) assert.ok(!recordedAts(restored, 'alice').includes(r.recordedAt));
+  });
+});
+
+test('test-run and race events share one DB: each shows only its own window sessions', { timeout: 60_000 }, async () => {
+  const { key, keyHash } = generateKey('alice');
+  const testRun = writeEventConfig('test-run', 1_759_000_000_000, 1_760_500_000_000, keyHash);
+  const race = writeEventConfig('race', 1_761_000_000_000, 1_762_000_000_000, keyHash);
+  const dataDir = mkdtempSync(join(tmpdir(), 'rlt-events-'));
+  const sessionA = mixedBatch; // starts at 1_760_000_000_000, in the test-run window
+  const sessionB = sessionBatch('5a6b7c8d-9e0f-4a1b-8c2d-3e4f5a6b7c8d', 1_761_500_000_000);
+  const aTimes = sessionA.records.filter((r) => r.kind === 'fix').map((r) => r.recordedAt);
+  const bTimes = sessionB.records.filter((r) => r.kind === 'fix').map((r) => r.recordedAt);
+
+  await withServer({ EVENT_CONFIG: testRun, DATA_DIR: dataDir }, async (base) => {
+    await postBatch(base, key, sessionA);
+    assert.deepStrictEqual(recordedAts(await fetchSnapshot(base), 'alice'), aTimes);
+  });
+
+  await withServer({ EVENT_CONFIG: race, DATA_DIR: dataDir }, async (base) => {
+    const health = (await (await fetch(`${base}/api/v1/health`)).json()) as { eventId: string };
+    assert.equal(health.eventId, 'race');
+    const snap = await fetchSnapshot(base);
+    assert.equal(snap.runners.find((r) => r.runnerId === 'alice')!.status, 'notStarted');
+    assert.deepStrictEqual(recordedAts(snap, 'alice'), []);
+    await postBatch(base, key, sessionB);
+    assert.deepStrictEqual(recordedAts(await fetchSnapshot(base), 'alice'), bTimes);
+  });
+
+  await withServer({ EVENT_CONFIG: testRun, DATA_DIR: dataDir }, async (base) => {
+    const health = (await (await fetch(`${base}/api/v1/health`)).json()) as { eventId: string };
+    assert.equal(health.eventId, 'test-run');
+    assert.deepStrictEqual(recordedAts(await fetchSnapshot(base), 'alice'), aTimes);
+  });
+
+  const db = new Database(join(dataDir, 'tracker.db'), { readonly: true });
+  try {
+    const sessions = db.prepare('SELECT sessionId, runnerId FROM sessions ORDER BY sessionStartedAt').all();
+    assert.deepStrictEqual(sessions, [
+      { sessionId: sessionA.sessionId, runnerId: 'alice' },
+      { sessionId: sessionB.sessionId, runnerId: 'alice' },
+    ]);
+  } finally {
+    db.close();
   }
 });

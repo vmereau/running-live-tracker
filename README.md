@@ -36,6 +36,10 @@ Create your event config from the example (the real one is git-ignored because i
 cp config/event.example.json config/event.json
 ```
 
+Every `config/*.json` except `*.example.json` is git-ignored. For separate test-run and race
+configs sharing one database, switching between them, backups and restore, see
+[docs/ops/events-and-backups.md](docs/ops/events-and-backups.md).
+
 ### Course (optional)
 
 To show the event's course on the map, add `"coursePath"` to `config/event.json`:
@@ -63,6 +67,7 @@ Without `coursePath` the event has no course: `hasCourse` is `false` and
 | `pnpm depcruise` | Enforce the architecture's module graph (`.dependency-cruiser.cjs`) |
 | `pnpm dev` | Start the server on `127.0.0.1` |
 | `pnpm keygen <runnerId>` | Make a new runner key: prints the key (for the runner's phone only), its `keyHash` and a runner entry to paste into `config/event.json` |
+| `pnpm backup` | Write a consistent copy of `<DATA_DIR>/tracker.db` (SQLite online backup, safe while the server runs) to `<DATA_DIR>/backups/tracker-<UTC time>.db` and print its path (see [docs/ops/events-and-backups.md](docs/ops/events-and-backups.md)) |
 | `pnpm simulate --base-url <url> --gpx <file> --key <k> …` | Replay a GPX file as one or more simulated runners through the real ingest API (see [Simulating runners](#simulating-runners)) |
 | `pnpm --filter web build` | Build the web app (`index.html` map + `diagnostic.html`) into `web/dist/` |
 | `pnpm --filter web dev` | Vite dev server for the web app; `/api` is proxied to `http://127.0.0.1:8787` |
@@ -294,7 +299,7 @@ Story 1.2 live-stream test: [docs/ops/tailscale-funnel.md](docs/ops/tailscale-fu
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | HTTP port. The server always binds `127.0.0.1` only. |
-| `DATA_DIR` | `<repo>/data` | Data folder (git-ignored), created at boot if missing. Holds `tracker.db`, the append-only SQLite fix log (WAL mode, so `tracker.db-wal`/`-shm` sit next to it while the server runs; never copy these files while it is running). Log files arrive in Story 4.2 (logs go to stdout for now). |
+| `DATA_DIR` | `<repo>/data` | Data folder (git-ignored), created at boot if missing. Holds `tracker.db`, the append-only SQLite fix log (WAL mode, so `tracker.db-wal`/`-shm` sit next to it while the server runs; never copy these files while it is running). `backups/` holds the `pnpm backup` copies. Log files arrive in Story 4.2 (logs go to stdout for now). |
 | `EVENT_CONFIG` | `<repo>/config/event.json` | Event config, validated at boot; the server refuses to start if it is invalid |
 
 Example: `EVENT_CONFIG=config/event.example.json pnpm dev`.
