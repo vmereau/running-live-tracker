@@ -1,5 +1,6 @@
 // Display formatting for the map page. Ages and elapsed time are the only derived
-// numbers the page computes (AD-2); distance and paces come from the server as-is.
+// numbers the page computes (AD-2); distance, paces and course progress come from
+// the server as-is.
 import type { RunnerStatus, RunnerView } from '@running-live-tracker/shared';
 
 const EM_DASH = '—';
@@ -71,28 +72,93 @@ export function runnerStatsText(
   };
 }
 
+export type ProgressText = {
+  /** "X.X / Y.Y km": progress floored to 0.1 km, so it never reads as done before the finish. */
+  done: string;
+  /** "Z.Z km", rounded up to 0.1 km: 40 m left reads "0.1 km". */
+  remaining: string;
+  /** "N %", floored. */
+  percent: string;
+};
+
+type ProgressFields = Pick<RunnerView, 'progressM' | 'remainingM' | 'progressFraction'>;
+
+/** The server's course progress formatted; null without a course (`lengthM` null) or without progress. */
+export function progressText(view: ProgressFields, lengthM: number | null): ProgressText | null {
+  if (lengthM === null || view.progressM === null || view.remainingM === null || view.progressFraction === null) return null;
+  const totalKm = (lengthM / 1000).toFixed(1);
+  // At the finish the done figure is the total; before it, floored so it never reads as done.
+  const doneKm = view.progressM >= lengthM ? totalKm : (Math.floor(view.progressM / 100) / 10).toFixed(1);
+  return {
+    done: `${doneKm} / ${totalKm} km`,
+    remaining: `${(Math.ceil(view.remainingM / 100 - 1e-9) / 10).toFixed(1)} km`,
+    percent: `${Math.floor(view.progressFraction * 100 + 1e-9)} %`,
+  };
+}
+
+export type RunnerRowText = {
+  /** "X.X / Y.Y km" with progress, else the distance "X.X km". */
+  distance: string;
+  /** Tooltip of the distance slot. */
+  distanceTitle: string;
+  /** The row's progress line; null hides it. */
+  progress: ProgressText | null;
+  /** Shows the "off course" badge: only alongside progress. */
+  offCourse: boolean;
+};
+
+/** The course-dependent part of a runner row; `lengthM` is snapshot.event.lengthM. */
+export function runnerRowText(
+  view: ProgressFields & Pick<RunnerView, 'runStartedAt' | 'runEndedAt' | 'distanceM' | 'currentPaceSPerKm' | 'avgPaceSPerKm' | 'offCourse'>,
+  lengthM: number | null,
+  now: number,
+): RunnerRowText {
+  const progress = progressText(view, lengthM);
+  return {
+    distance: progress?.done ?? runnerStatsText(view, now).distance,
+    distanceTitle: progress ? 'distance on course / course length' : 'distance',
+    progress,
+    offCourse: progress !== null && view.offCourse,
+  };
+}
+
 export type SelectedPanelText = {
   /** "Name · status". */
   title: string;
   /** True while the runner has not started: the panel says so instead of showing run stats. */
   notStarted: boolean;
+  /** Shows the "off course" badge: only alongside progress. */
+  offCourse: boolean;
   /** Label/value pairs in display order. Elapsed and last update move with `now`. */
   rows: [label: string, value: string][];
 };
 
-/** The stats block of the selected runner: server values formatted, elapsed and age measured against `now`. */
-export function selectedPanelText(view: RunnerView, name: string, now: number): SelectedPanelText {
+/**
+ * The stats block of the selected runner: server values formatted, elapsed and age
+ * measured against `now`. With progress (`lengthM` is snapshot.event.lengthM), the
+ * distance reads "X.X / Y.Y km" and Remaining and Complete rows follow it.
+ */
+export function selectedPanelText(view: RunnerView, name: string, lengthM: number | null, now: number): SelectedPanelText {
   const title = `${name} · ${statusLabel(view.status)}`;
   const age = ageMs(view.lastReceivedAt, now);
   const lastUpdate: [string, string] = ['Last update', formatAge(age)];
-  if (view.status === 'notStarted') return { title, notStarted: true, rows: [lastUpdate] };
+  if (view.status === 'notStarted') return { title, notStarted: true, offCourse: false, rows: [lastUpdate] };
   const stats = runnerStatsText(view, now);
+  const progress = progressText(view, lengthM);
+  const distanceRows: [string, string][] = progress
+    ? [
+        ['Distance', progress.done],
+        ['Remaining', progress.remaining],
+        ['Complete', progress.percent],
+      ]
+    : [['Distance', stats.distance]];
   return {
     title,
     notStarted: false,
+    offCourse: progress !== null && view.offCourse,
     rows: [
       ['Elapsed', stats.elapsed],
-      ['Distance', stats.distance],
+      ...distanceRows,
       ['Current pace', stats.currentPace],
       ['Average pace', stats.avgPace],
       lastUpdate,

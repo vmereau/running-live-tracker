@@ -37,7 +37,7 @@ export type Projection = {
 export type CreateProjectionOptions = {
   config: EventConfig;
   store: Pick<Store, 'readSession' | 'readRunRecords'>;
-  /** The event's course, if configured: fills EventInfo.hasCourse and lengthM. */
+  /** The event's course, if configured: fills EventInfo.hasCourse and lengthM, and drives course progress. */
   course?: Course | null;
 };
 
@@ -54,13 +54,13 @@ export function createProjection({ config, store, course = null }: CreateProject
   let listener: ChangeListener | undefined;
 
   const replay = (runnerId: string): RunnerState =>
-    applyRecords(initialRunnerState(runnerId), store.readRunRecords(runnerId, opensAt, closesAt));
+    applyRecords(initialRunnerState(runnerId), store.readRunRecords(runnerId, opensAt, closesAt), course);
 
   // Boot replay: the same fold the live path uses.
   for (const { runnerId } of config.runners) {
     const state = replay(runnerId);
     states.set(runnerId, state);
-    views.set(runnerId, toRunnerView(state));
+    views.set(runnerId, toRunnerView(state, course));
   }
 
   function recordsCommitted({ runnerId, sessionId, firstInsertedSeq }: RecordsCommitted): void {
@@ -78,11 +78,11 @@ export function createProjection({ config, store, course = null }: CreateProject
     }
     const next = refold
       ? replay(runnerId)
-      : applyRecords(prev, store.readRunRecords(runnerId, opensAt, closesAt, prev.lastKey ?? undefined));
+      : applyRecords(prev, store.readRunRecords(runnerId, opensAt, closesAt, prev.lastKey ?? undefined), course);
     states.set(runnerId, next);
 
     const prevView = views.get(runnerId)!;
-    const view = toRunnerView(next);
+    const view = toRunnerView(next, course);
     views.set(runnerId, view);
 
     // The fast path only ever appends; a refold may rebuild the track from scratch.

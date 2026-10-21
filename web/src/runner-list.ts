@@ -2,13 +2,14 @@
 // overview), a stats block for the selected runner, then per runner a color
 // swatch, name, status, a ticking "last update" age and a stats line (ticking
 // elapsed time, then the server's distance and paces, only formatted here),
-// plus the connection banner. Rows are keyed and updated in place so a tap is
+// and with a course a progress line and an "off course" badge, plus the
+// connection banner. Rows are keyed and updated in place so a tap is
 // never lost to a re-render.
 import type { Snapshot } from '@running-live-tracker/shared';
 import type { Store } from './store.ts';
 import type { Selection } from './selection.ts';
 import type { ConnectionStatus } from './live-client.ts';
-import { ageMs, formatAge, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
+import { ageMs, formatAge, runnerRowText, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
 
 const TICK_MS = 1_000;
 const FALLBACK_COLOR = '#555555';
@@ -24,6 +25,10 @@ type Row = {
   distance: HTMLElement;
   currentPace: HTMLElement;
   avgPace: HTMLElement;
+  offCourse: HTMLElement;
+  progress: HTMLElement;
+  remaining: HTMLElement;
+  percent: HTMLElement;
 };
 
 export type RunnerList = { setConnection: (status: ConnectionStatus) => void };
@@ -34,6 +39,13 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, className = ''): HTML
   return node;
 }
 
+function offCourseBadge(): HTMLElement {
+  const badge = el('span', 'off-course');
+  badge.textContent = 'off course';
+  badge.hidden = true;
+  return badge;
+}
+
 export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: Store, selection: Selection): RunnerList {
   const title = el('div', 'panel-title');
   const allButton = el('button', 'all-runners');
@@ -42,6 +54,9 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
   allButton.addEventListener('click', () => selection.showAll());
   const detail = el('div', 'panel-detail');
   const detailTitle = el('div', 'detail-title');
+  const detailTitleText = el('span');
+  const detailOffCourse = offCourseBadge();
+  detailTitle.append(detailTitleText, detailOffCourse);
   const detailNote = el('div', 'detail-note');
   detailNote.textContent = 'Not started yet';
   const detailStats = el('dl', 'detail-stats');
@@ -67,22 +82,29 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
     const meta = el('span', 'runner-meta');
     const status = el('span');
     const age = el('span');
-    meta.append(status, ' · ', age);
+    const offCourse = offCourseBadge();
+    meta.append(status, ' · ', age, offCourse);
     const stats = el('span', 'runner-stats');
     const elapsed = el('span');
     const distance = el('span');
     const currentPace = el('span');
     const avgPace = el('span');
     elapsed.title = 'elapsed time';
-    distance.title = 'distance';
     currentPace.title = 'current pace';
     avgPace.title = 'average pace';
     stats.append(elapsed, ' · ', distance, ' · now ', currentPace, ' · avg ', avgPace);
-    text.append(name, meta, stats);
+    const progress = el('span', 'runner-progress');
+    const remaining = el('span');
+    const percent = el('span');
+    remaining.title = 'remaining';
+    percent.title = 'complete';
+    progress.append(remaining, ' left · ', percent);
+    progress.hidden = true;
+    text.append(name, meta, stats, progress);
     button.append(swatch, text);
     button.addEventListener('click', () => selection.select(runnerId));
     item.append(button);
-    return { item, button, swatch, name, status, age, elapsed, distance, currentPace, avgPace };
+    return { item, button, swatch, name, status, age, elapsed, distance, currentPace, avgPace, offCourse, progress, remaining, percent };
   }
 
   /** Everything that moves with the clock alone: last-update age and elapsed time. */
@@ -108,9 +130,10 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
       detail.hidden = true;
       return;
     }
-    const text = selectedPanelText(view, displayName(snapshot, view.runnerId), store.now());
+    const text = selectedPanelText(view, displayName(snapshot, view.runnerId), snapshot.event.lengthM, store.now());
     detail.hidden = false;
-    detailTitle.textContent = text.title;
+    detailTitleText.textContent = text.title;
+    detailOffCourse.hidden = !text.offCourse;
     detailNote.hidden = !text.notStarted;
     // Rebuilt on every render: the block holds no controls, so no tap can be lost.
     const cells: HTMLElement[] = [];
@@ -150,10 +173,17 @@ export function createRunnerList(root: HTMLElement, banner: HTMLElement, store: 
       row.swatch.style.background = config?.color ?? FALLBACK_COLOR;
       row.name.textContent = displayName(snapshot, view.runnerId);
       row.status.textContent = statusLabel(view.status);
-      const stats = runnerStatsText(view, store.now());
-      row.distance.textContent = stats.distance;
+      const now = store.now();
+      const stats = runnerStatsText(view, now);
+      const rowText = runnerRowText(view, snapshot.event.lengthM, now);
+      row.distance.textContent = rowText.distance;
+      row.distance.title = rowText.distanceTitle;
       row.currentPace.textContent = stats.currentPace;
       row.avgPace.textContent = stats.avgPace;
+      row.offCourse.hidden = !rowText.offCourse;
+      row.progress.hidden = rowText.progress === null;
+      row.remaining.textContent = rowText.progress?.remaining ?? '';
+      row.percent.textContent = rowText.progress?.percent ?? '';
       // Keep the DOM order equal to the snapshot order, moving rows only when needed.
       const current = list.children[index] ?? null;
       if (current !== row.item) list.insertBefore(row.item, current);

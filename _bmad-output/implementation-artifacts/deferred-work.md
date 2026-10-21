@@ -25,3 +25,6 @@
 - source_spec: `_bmad-output/implementation-artifacts/spec-3-3-shared-gpx-course-on-the-map.md`
   summary: The map's course rendering (`setCourse`: [lat, lon] order, `course` pane below the tracks, fit call) and its `main.ts` wiring to `watchCourse` have no automated test.
   evidence: No test imports `web/src/map-view.ts` or `main.ts`; swapping the tuple to `[p.lon, p.lat]`, raising the pane z-index above 400, or dropping `watchCourse(...)` passes `pnpm check`. Same fake-map seam as the 3.2 camera-executor item would cover it.
+- source_spec: `_bmad-output/implementation-artifacts/spec-3-4-course-progress.md`
+  summary: Add tests for the runner-list DOM wiring (progress line and off-course badge hidden flags, lengthM passed from the snapshot).
+  evidence: No test imports `web/src/runner-list.ts`; the display decisions are tested in `format.ts` helpers, but the repo has no DOM test harness to check the assignments.

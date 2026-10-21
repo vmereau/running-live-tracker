@@ -5,6 +5,9 @@ import type { RunnerStatus, RunnerView, TrackPoint } from '@running-live-tracker
 import type { RunKey } from '../store/open-store.ts';
 import { avgPaceSPerKm, currentPaceSPerKm, currentPaceWindowStart, segmentDistanceM } from '../domain/stats.ts';
 import type { PaceSample } from '../domain/stats.ts';
+import type { Course } from '../domain/course.ts';
+import { advanceProgress, startProgress } from '../domain/progress.ts';
+import type { CourseProgress } from '../domain/progress.ts';
 import { initialRunnerView } from './snapshot.ts';
 
 /** Largest accuracy radius (m) a fix may have to count. 30 exactly is accepted. */
@@ -34,6 +37,10 @@ export type RunnerState = {
   readonly track: readonly TrackPoint[];
   /** Sum of the segments between consecutive accepted fixes (sessions and gaps included). */
   readonly distanceM: number;
+  /** Progress along the course: null without a course or before the first accepted fix. */
+  readonly progress: CourseProgress | null;
+  /** sessionId of the last accepted fix: a new session restarts the progress window clock. */
+  readonly lastFixSessionId: string | null;
   /** Accepted fixes from the current-pace window start on (older ones are never needed again). */
   readonly paceSamples: readonly PaceSample[];
   /** Canonical key of the last folded record (ignored ones included), or null before any. */
@@ -53,6 +60,8 @@ export function initialRunnerState(runnerId: string): RunnerState {
     lastPosition: null,
     track: [],
     distanceM: 0,
+    progress: null,
+    lastFixSessionId: null,
     paceSamples: [],
     lastKey: null,
     sessionEnded: false,
@@ -80,8 +89,12 @@ export function isAccepted(state: Pick<RunnerState, 'lastFixAt'>, record: RunRec
 
 type Mutable<T> = { -readonly [K in keyof T]: T[K] };
 
-/** Folds `records` (canonical order, all after `state.lastKey`) into a new state. */
-export function applyRecords(state: RunnerState, records: readonly RunRecord[]): RunnerState {
+/**
+ * Folds `records` (canonical order, all after `state.lastKey`) into a new state.
+ * With a course, accepted fixes also move the course progress, and the pace samples
+ * measure progress minus the distance skipped by rejoin jumps.
+ */
+export function applyRecords(state: RunnerState, records: readonly RunRecord[], course: Course | null = null): RunnerState {
   const next: Mutable<RunnerState> = { ...state };
   const appended: TrackPoint[] = [];
   const appendedSamples: PaceSample[] = [];
@@ -110,8 +123,22 @@ export function applyRecords(state: RunnerState, records: readonly RunRecord[]):
     next.status = 'active';
     next.runEndedAt = null;
     if (next.lastPosition !== null) next.distanceM += segmentDistanceM(next.lastPosition, { lat, lon });
+    if (course !== null) {
+      const first = next.progress === null;
+      let progress = next.progress ?? startProgress(record.recordedAt);
+      // A new session (Stop then resume): the pause is not movement, so the window clock
+      // restarts and a rejoin begun before the pause is dropped.
+      if (next.lastFixSessionId !== null && next.lastFixSessionId !== record.sessionId) {
+        progress = { ...progress, lastMatchAt: record.recordedAt, rejoinCount: 0, rejoinM: null, rejoinAt: null };
+      }
+      progress = advanceProgress(course, progress, { lat, lon, recordedAt: record.recordedAt });
+      // Tracking began where the first fix matched: the metres before it were never run.
+      if (first) progress = { ...progress, skippedM: progress.skippedM + progress.progressM };
+      next.progress = progress;
+    }
+    next.lastFixSessionId = record.sessionId;
     next.lastFixAt = record.recordedAt;
-    appendedSamples.push({ recordedAt: record.recordedAt, distanceM: next.distanceM });
+    appendedSamples.push({ recordedAt: record.recordedAt, distanceM: paceDistanceM(next) });
     next.lastPosition = { lat, lon };
     appended.push({ lat, lon, recordedAt: record.recordedAt });
   }
@@ -123,8 +150,15 @@ export function applyRecords(state: RunnerState, records: readonly RunRecord[]):
   return next;
 }
 
-export function toRunnerView(state: RunnerState): RunnerView {
+/** The distance paces are measured on: progress minus skipped metres with a course, else the raw distance. */
+function paceDistanceM(state: Pick<RunnerState, 'progress' | 'distanceM'>): number {
+  return state.progress === null ? state.distanceM : state.progress.progressM - state.progress.skippedM;
+}
+
+export function toRunnerView(state: RunnerState, course: Course | null = null): RunnerView {
   const elapsedS = state.runStartedAt === null || state.lastFixAt === null ? 0 : (state.lastFixAt - state.runStartedAt) / 1000;
+  const progress = course === null ? null : state.progress;
+  const paceM = course === null ? state.distanceM : paceDistanceM(state);
   return {
     ...initialRunnerView(state.runnerId),
     status: state.status,
@@ -133,8 +167,12 @@ export function toRunnerView(state: RunnerState): RunnerView {
     lastFixAt: state.lastFixAt,
     lastReceivedAt: state.lastReceivedAt,
     lastPosition: state.lastPosition === null ? null : { ...state.lastPosition },
-    distanceM: state.distanceM,
-    avgPaceSPerKm: avgPaceSPerKm(elapsedS, state.distanceM),
+    distanceM: course === null ? state.distanceM : (progress?.progressM ?? 0),
+    progressM: progress?.progressM ?? null,
+    remainingM: progress === null ? null : Math.max(0, course!.lengthM - progress.progressM),
+    progressFraction: progress === null ? null : Math.min(1, progress.progressM / course!.lengthM),
+    offCourse: progress?.offCourse ?? false,
+    avgPaceSPerKm: avgPaceSPerKm(elapsedS, paceM),
     currentPaceSPerKm: state.status === 'stopped' ? null : currentPaceSPerKm(state.paceSamples),
   };
 }

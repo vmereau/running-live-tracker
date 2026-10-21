@@ -4,6 +4,7 @@ import { RunnerView } from '@running-live-tracker/shared';
 import { applyRecords, compareRunKeys, initialRunnerState, isAccepted, toRunnerView } from './apply-records.ts';
 import type { RunRecord } from './apply-records.ts';
 import { initialRunnerView } from './snapshot.ts';
+import { buildCourse } from '../domain/course.ts';
 
 const S1 = '00000000-0000-4000-8000-000000000001';
 const S2 = '00000000-0000-4000-8000-000000000002';
@@ -220,4 +221,126 @@ test('stats: pace samples are pruned to the current window, identically in chunk
   let chunked = initialRunnerState('alice');
   for (let i = 0; i < records.length; i += 7) chunked = applyRecords(chunked, records.slice(i, i + 7));
   assert.deepStrictEqual(chunked, whole);
+});
+
+// ---- course progress (Story 3.4) ----
+
+const DEG_M = (6_371_000 * Math.PI) / 180;
+const KX = DEG_M * Math.cos((48 * Math.PI) / 180);
+/** Course point / fix position `y` m north and `x` m east of (48, 2). */
+const at = (y: number, x = 0) => ({ lat: 48 + y / DEG_M, lon: 2 + x / KX });
+/** A straight-north course, one point every 100 m. */
+const straightCourse = (lengthM: number) => buildCourse(Array.from({ length: lengthM / 100 + 1 }, (_, i) => at(i * 100)));
+const SPEED = 1000 / 300; // 5:00 /km
+
+/** One fix every 5 s along [fromM, toM] of the straight-north layout, at 5:00 /km. */
+function northFixes(fromM: number, toM: number, opts: { t0?: number; seq0?: number; x?: number; sessionId?: string } = {}): RunRecord[] {
+  const { t0 = 1_000_000, seq0 = 0, x = 0, sessionId = S1 } = opts;
+  const out: RunRecord[] = [];
+  for (let t = 0; fromM + t * SPEED <= toM; t += 5) {
+    const p = at(fromM + t * SPEED, x);
+    out.push(fix(seq0 + out.length, t0 + t * 1000, { ...p, sessionId }));
+  }
+  return out;
+}
+
+test('progress: without a course the four fields keep their defaults and distance is the raw sum', () => {
+  const records = northFixes(0, 500);
+  const view = RunnerView.parse(toRunnerView(applyRecords(initialRunnerState('alice'), records)));
+  assert.equal(view.progressM, null);
+  assert.equal(view.remainingM, null);
+  assert.equal(view.progressFraction, null);
+  assert.equal(view.offCourse, false);
+  assert.ok(Math.abs(view.distanceM - 500) < 2);
+});
+
+test('progress: with a course but no accepted fix, the fields are null and offCourse false', () => {
+  const course = straightCourse(2000);
+  const state = applyRecords(initialRunnerState('alice'), [fix(0, 1_000, { accuracyM: 80 })], course);
+  const view = RunnerView.parse(toRunnerView(state, course));
+  assert.equal(state.progress, null);
+  assert.deepStrictEqual(
+    [view.progressM, view.remainingM, view.progressFraction, view.offCourse, view.distanceM],
+    [null, null, null, false, 0],
+  );
+});
+
+test('progress: with a course, distance = progressM; remaining and fraction follow lengthM', () => {
+  const course = straightCourse(2000);
+  const view = RunnerView.parse(toRunnerView(applyRecords(initialRunnerState('alice'), northFixes(0, 500), course), course));
+  assert.ok(view.progressM !== null && Math.abs(view.progressM - 500) < 2, String(view.progressM));
+  assert.equal(view.distanceM, view.progressM);
+  assert.equal(view.remainingM, course.lengthM - view.progressM);
+  assert.equal(view.progressFraction, view.progressM / course.lengthM);
+  assert.equal(view.offCourse, false);
+  assert.ok(view.avgPaceSPerKm !== null && Math.abs(view.avgPaceSPerKm - 300) < 3);
+});
+
+test('progress: folding in chunks equals folding at once', () => {
+  const course = straightCourse(5000);
+  const records = [...northFixes(0, 300), ...northFixes(2000, 2400, { t0: 1_100_000, seq0: 100 })];
+  const once = applyRecords(initialRunnerState('alice'), records, course);
+  const chunked = applyRecords(applyRecords(initialRunnerState('alice'), records.slice(0, 40), course), records.slice(40), course);
+  assert.deepStrictEqual(chunked, once);
+});
+
+test('progress: late Start at 40 %: paces stay near the true pace after the jump (skipped metres excluded)', () => {
+  const course = straightCourse(5000);
+  const records = northFixes(2000, 5000);
+  const states: RunnerView[] = [];
+  let state = initialRunnerState('alice');
+  for (const r of records) {
+    state = applyRecords(state, [r], course);
+    states.push(RunnerView.parse(toRunnerView(state, course)));
+  }
+  for (const v of states.slice(0, 5)) {
+    assert.equal(v.offCourse, true);
+    assert.equal(v.progressM, 0);
+  }
+  assert.ok(states[5]!.progressM! > 2000);
+  for (const v of states) {
+    // The 5 off-course fixes add elapsed time without distance: at most ~25 s over the run.
+    if (v.avgPaceSPerKm !== null) assert.ok(v.avgPaceSPerKm > 290, `avg ${v.avgPaceSPerKm}`);
+    if (v.currentPaceSPerKm !== null) assert.ok(Math.abs(v.currentPaceSPerKm - 300) < 6, `current ${v.currentPaceSPerKm}`);
+  }
+  const last = states.at(-1)!;
+  assert.ok(Math.abs(last.progressM! - 5000) < 2);
+  assert.ok(Math.abs(last.avgPaceSPerKm! - 300) < 300 * 0.05, `avg ${last.avgPaceSPerKm}`);
+  assert.ok(Math.abs(last.currentPaceSPerKm! - 300) < 6);
+});
+
+test('progress: a new session restarts the window clock, so a long pause on an out-and-back stays outbound', () => {
+  // Out north 1500 m, back south 30 m to the east.
+  const course = buildCourse([
+    ...Array.from({ length: 16 }, (_, i) => at(i * 100)),
+    ...Array.from({ length: 16 }, (_, i) => at(1500 - i * 100, 30)),
+  ]);
+  const s1 = northFixes(0, 300);
+  const lastAt = s1.at(-1)!.recordedAt;
+  const s2 = northFixes(310, 400, { t0: lastAt + 3_600_000, sessionId: S2 }).map((r) => ({ ...r, sessionStartedAt: lastAt + 3_600_000 }));
+  const records = [...s1, end(s1.length, lastAt + 1_000), ...s2];
+  const view = toRunnerView(applyRecords(initialRunnerState('alice'), records, course), course);
+  assert.ok(Math.abs(view.progressM! - (310 + 25 * SPEED)) < 2, String(view.progressM)); // the last fix, 25 s after resuming
+  // The same pause inside one session (no Stop) keeps the grown window.
+  // A rejoin begun before the Stop does not carry into the new session.
+  // Five fixes on the outbound leg beyond the window (which ends at ≈ 1300 m).
+  const offAhead = Array.from({ length: 5 }, (_, i) => fix(s1.length + i, lastAt + 5_000 * (i + 1), at(1_450 + i * 15)));
+  const beforeStop = applyRecords(initialRunnerState('alice'), [...s1, ...offAhead.slice(0, 5)], course);
+  assert.equal(beforeStop.progress!.rejoinCount, 5);
+  const resumed = applyRecords(beforeStop, [{ ...s2[0]!, ...at(1_530) }], course);
+  assert.equal(resumed.progress!.rejoinCount, 1, 'the count restarts with the resumed session');
+  assert.ok(resumed.progress!.progressM < 400, String(resumed.progress!.progressM));
+  const sameSession = toRunnerView(applyRecords(initialRunnerState('alice'), [...s1, ...s2.map((r) => ({ ...r, sessionId: S1, sessionStartedAt: 100 }))], course), course);
+  assert.ok(sameSession.progressM! > 1500, String(sameSession.progressM));
+});
+
+test('progress: a late Start inside the first window counts the start position as skipped, not in pace', () => {
+  const course = straightCourse(5000);
+  const records = northFixes(800, 3000);
+  const state = applyRecords(initialRunnerState('alice'), records, course);
+  const view = RunnerView.parse(toRunnerView(state, course));
+  assert.ok(Math.abs(state.progress!.skippedM - 800) < 1, String(state.progress!.skippedM));
+  assert.ok(Math.abs(view.progressM! - 3000) < 2, String(view.progressM));
+  assert.ok(Math.abs(view.avgPaceSPerKm! - 300) < 3, `avg ${view.avgPaceSPerKm}`);
+  assert.ok(Math.abs(view.currentPaceSPerKm! - 300) < 6, `current ${view.currentPaceSPerKm}`);
 });

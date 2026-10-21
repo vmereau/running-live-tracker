@@ -7,6 +7,7 @@ import { Snapshot } from '@running-live-tracker/shared';
 import type { IngestRecord } from '@running-live-tracker/shared';
 import type { EventConfig } from '../config/load-config.ts';
 import { buildCourse } from '../domain/course.ts';
+import type { Course } from '../domain/course.ts';
 import { openStore } from '../store/open-store.ts';
 import type { Store } from '../store/open-store.ts';
 import { createProjection } from './create-projection.ts';
@@ -54,7 +55,7 @@ function setup(path = ':memory:') {
   return { store, projection, changes };
 }
 
-const replaySnapshot = (store: Store) => createProjection({ config, store }).snapshot(0);
+const replaySnapshot = (store: Store, course: Course | null = null) => createProjection({ config, store, course }).snapshot(0);
 
 test('an empty store projects every runner notStarted with an empty track', () => {
   const { store, projection } = setup();
@@ -299,9 +300,21 @@ function viewer(projection: Projection) {
   };
 }
 
-for (const mode of ['shuffled', 'in-order'] as const) {
-  test(`live state equals a fresh replay over seeded random batch orders (${mode})`, () => {
-    const seen = { distance: 0, avgPace: 0, currentPace: 0 };
+/**
+ * A course along the `fix()` pattern: north from lat 48 on lon 2.005. `fix()` drifts
+ * east with recordedAt (lon 2 + recordedAt / 1e7), so fixes recorded around 50 s are
+ * on it and the others are off it.
+ */
+const fixPatternCourse = buildCourse(Array.from({ length: 16 }, (_, i) => ({ lat: 48 + i * 0.002, lon: 2.005 })));
+
+for (const [mode, course] of [
+  ['shuffled', null],
+  ['in-order', null],
+  ['shuffled', fixPatternCourse],
+  ['in-order', fixPatternCourse],
+] as const) {
+  test(`live state equals a fresh replay over seeded random batch orders (${mode}, ${course ? 'course' : 'no course'})`, () => {
+    const seen = { distance: 0, avgPace: 0, currentPace: 0, progress: 0, offCourse: 0 };
     for (let seed = 1; seed <= 60; seed++) {
       const random = rng(seed);
       const a1 = { runnerId: 'alice', sessionId: S1, sessionStartedAt: 20_000 };
@@ -313,7 +326,7 @@ for (const mode of ['shuffled', 'in-order'] as const) {
 
       const store = openStore(':memory:');
       try {
-        const projection = createProjection({ config, store });
+        const projection = createProjection({ config, store, course });
         const client = viewer(projection);
         const changes: RunnerChange[] = [];
         projection.onChange((c) => {
@@ -327,13 +340,15 @@ for (const mode of ['shuffled', 'in-order'] as const) {
           assert.ok(changes.length - before <= 1, 'at most one change per batch');
         }
         const live = projection.snapshot(0);
-        assert.deepStrictEqual(live, replaySnapshot(store), `seed ${seed}`);
+        assert.deepStrictEqual(live, replaySnapshot(store, course), `seed ${seed}`);
         assert.deepStrictEqual(client.model(), live, `seed ${seed}: the event stream rebuilds the state`);
         Snapshot.parse(live);
         for (const v of live.runners) {
           if (v.distanceM > 0) seen.distance++;
           if (v.avgPaceSPerKm !== null) seen.avgPace++;
           if (v.currentPaceSPerKm !== null) seen.currentPace++;
+          if (v.progressM !== null && v.progressM > 0) seen.progress++;
+          if (v.offCourse) seen.offCourse++;
         }
         if (mode === 'in-order') assert.ok(changes.every((c) => !c.trackReset), `seed ${seed}: no reset for in-order sessions`);
       } finally {
@@ -342,6 +357,8 @@ for (const mode of ['shuffled', 'in-order'] as const) {
     }
     // The comparison covers non-trivial stats, not just their defaults.
     assert.ok(seen.distance > 0 && seen.avgPace > 0 && seen.currentPace > 0, JSON.stringify(seen));
+    if (course) assert.ok(seen.progress > 0 && seen.offCourse > 0, JSON.stringify(seen));
+    else assert.ok(seen.progress === 0 && seen.offCourse === 0, JSON.stringify(seen));
   });
 }
 

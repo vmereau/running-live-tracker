@@ -182,8 +182,31 @@ body {
 }
 
 /* On a narrow phone the line wraps between items, never inside a value. */
-.runner-stats > span {
+.runner-stats > span,
+.runner-progress > span {
   white-space: nowrap;
+}
+
+/* Course progress line: "Z.Z km left · N %". */
+.runner-progress {
+  font-size: 12px;
+  color: #222;
+  font-variant-numeric: tabular-nums;
+}
+
+/* "off course" badge, in a row's meta line and next to the selected runner's name. */
+.off-course {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: #b00020;
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .banner {
@@ -203,6 +226,8 @@ body {
 .banner[hidden],
 .panel-detail[hidden],
 .detail-note[hidden],
+.runner-progress[hidden],
+.off-course[hidden],
 .recenter-control[hidden] {
   display: none;
 }

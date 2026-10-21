@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { RunnerView } from '@running-live-tracker/shared';
-import { ageMs, elapsedMs, formatAge, formatDistanceKm, formatElapsed, formatPace, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
+import { ageMs, elapsedMs, formatAge, formatDistanceKm, formatElapsed, formatPace, progressText, runnerRowText, runnerStatsText, selectedPanelText, statusLabel } from './format.ts';
 
 test('formats ages as seconds below a minute and floored minutes above', () => {
   assert.equal(formatAge(0), '0 s ago');
@@ -100,9 +100,10 @@ function runnerView(overrides: Partial<RunnerView>): RunnerView {
 
 test('selectedPanelText: active runner shows every stat, elapsed and age tick with now', () => {
   const view = runnerView({});
-  assert.deepStrictEqual(selectedPanelText(view, 'Alice', 61_000), {
+  assert.deepStrictEqual(selectedPanelText(view, 'Alice', null, 61_000), {
     title: 'Alice · running',
     notStarted: false,
+    offCourse: false,
     rows: [
       ['Elapsed', '0:01:00'],
       ['Distance', '2.3 km'],
@@ -111,7 +112,7 @@ test('selectedPanelText: active runner shows every stat, elapsed and age tick wi
       ['Last update', '1 s ago'],
     ],
   });
-  const later = selectedPanelText(view, 'Alice', 71_000).rows;
+  const later = selectedPanelText(view, 'Alice', null, 71_000).rows;
   assert.deepStrictEqual(later[0], ['Elapsed', '0:01:10']);
   assert.deepStrictEqual(later[4], ['Last update', '11 s ago']);
 });
@@ -121,16 +122,17 @@ test('selectedPanelText: notStarted runner says so and shows only the last updat
     status: 'notStarted', runStartedAt: null, lastFixAt: null, lastReceivedAt: null, lastPosition: null,
     distanceM: 0, avgPaceSPerKm: null, currentPaceSPerKm: null,
   });
-  assert.deepStrictEqual(selectedPanelText(view, 'Bob', 5_000), {
+  assert.deepStrictEqual(selectedPanelText(view, 'Bob', null, 5_000), {
     title: 'Bob · not started',
     notStarted: true,
+    offCourse: false,
     rows: [['Last update', 'no data yet']],
   });
 });
 
 test('selectedPanelText: stopped runner shows the final elapsed time and no current pace', () => {
   const view = runnerView({ status: 'stopped', runEndedAt: 31_000, currentPaceSPerKm: null });
-  const text = selectedPanelText(view, 'Carol', 999_000);
+  const text = selectedPanelText(view, 'Carol', null, 999_000);
   assert.equal(text.title, 'Carol · stopped');
   assert.equal(text.notStarted, false);
   assert.deepStrictEqual(text.rows.slice(0, 4), [
@@ -139,4 +141,83 @@ test('selectedPanelText: stopped runner shows the final elapsed time and no curr
     ['Current pace', '—'],
     ['Average pace', '5:02 /km'],
   ]);
+});
+
+// ---- course progress (Story 3.4) ----
+
+const onCourse = { progressM: 4_567, remainingM: 5_433, progressFraction: 0.4567, distanceM: 4_567 };
+
+test('progressText: done floored to 0.1 km, remaining rounded up to 0.1 km, percent floored', () => {
+  assert.deepStrictEqual(progressText(onCourse, 10_000), { done: '4.5 / 10.0 km', remaining: '5.5 km', percent: '45 %' });
+  // Never "10.0 / 10.0 km" next to "99 %".
+  assert.deepStrictEqual(progressText({ progressM: 9_960, remainingM: 40, progressFraction: 0.996 }, 10_000), {
+    done: '9.9 / 10.0 km',
+    remaining: '0.1 km',
+    percent: '99 %',
+  });
+  // At the finish of a course whose length is not a multiple of 100 m, done reads the total.
+  assert.deepStrictEqual(progressText({ progressM: 2_270.39, remainingM: 0, progressFraction: 1 }, 2_270.39), {
+    done: '2.3 / 2.3 km',
+    remaining: '0.0 km',
+    percent: '100 %',
+  });
+  // 0.57 * 100 is 56.99999… in floating point: still "57 %".
+  assert.equal(progressText({ progressM: 5_700, remainingM: 4_300, progressFraction: 0.57 }, 10_000)!.percent, '57 %');
+  assert.deepStrictEqual(progressText({ progressM: 10_000, remainingM: 0, progressFraction: 1 }, 10_000), {
+    done: '10.0 / 10.0 km',
+    remaining: '0.0 km',
+    percent: '100 %',
+  });
+  assert.deepStrictEqual(progressText({ progressM: 0, remainingM: 2_270, progressFraction: 0 }, 2_270), { done: '0.0 / 2.3 km', remaining: '2.3 km', percent: '0 %' });
+});
+
+test('progressText: null without a course or with any progress field null', () => {
+  assert.equal(progressText(onCourse, null), null);
+  assert.equal(progressText({ ...onCourse, progressM: null }, 10_000), null);
+  assert.equal(progressText({ ...onCourse, remainingM: null }, 10_000), null);
+  assert.equal(progressText({ ...onCourse, progressFraction: null }, 10_000), null);
+});
+
+test('runnerRowText: with a course the distance reads done / total, plus the progress line and badge', () => {
+  const view = runnerView(onCourse);
+  assert.deepStrictEqual(runnerRowText(view, 10_000, 61_000), {
+    distance: '4.5 / 10.0 km',
+    distanceTitle: 'distance on course / course length',
+    progress: { done: '4.5 / 10.0 km', remaining: '5.5 km', percent: '45 %' },
+    offCourse: false,
+  });
+  assert.equal(runnerRowText(runnerView({ ...onCourse, offCourse: true }), 10_000, 61_000).offCourse, true);
+});
+
+test('runnerRowText: without a course, or without progress yet, only the distance and no badge', () => {
+  const plain = { distance: '2.3 km', distanceTitle: 'distance', progress: null, offCourse: false };
+  assert.deepStrictEqual(runnerRowText(runnerView({}), null, 61_000), plain);
+  assert.deepStrictEqual(runnerRowText(runnerView({ offCourse: true }), null, 61_000), plain);
+  // Course, but no progress (not started): nothing shown as 0.
+  const notStarted = runnerView({ status: 'notStarted', runStartedAt: null, distanceM: 0, offCourse: true });
+  assert.deepStrictEqual(runnerRowText(notStarted, 10_000, 61_000), { ...plain, distance: '0.0 km' });
+});
+
+test('selectedPanelText: with progress, Distance done / total, then Remaining and Complete; badge while off course', () => {
+  const text = selectedPanelText(runnerView(onCourse), 'Alice', 10_000, 61_000);
+  assert.equal(text.offCourse, false);
+  assert.deepStrictEqual(text.rows, [
+    ['Elapsed', '0:01:00'],
+    ['Distance', '4.5 / 10.0 km'],
+    ['Remaining', '5.5 km'],
+    ['Complete', '45 %'],
+    ['Current pace', '4:58 /km'],
+    ['Average pace', '5:02 /km'],
+    ['Last update', '1 s ago'],
+  ]);
+  assert.equal(selectedPanelText(runnerView({ ...onCourse, offCourse: true }), 'Alice', 10_000, 61_000).offCourse, true);
+});
+
+test('selectedPanelText: without a course or progress, no progress rows and no badge', () => {
+  const text = selectedPanelText(runnerView({ offCourse: true }), 'Alice', null, 61_000);
+  assert.equal(text.offCourse, false);
+  assert.deepStrictEqual(text.rows.map(([label]) => label), ['Elapsed', 'Distance', 'Current pace', 'Average pace', 'Last update']);
+  const noProgress = selectedPanelText(runnerView({ offCourse: true }), 'Alice', 10_000, 61_000);
+  assert.equal(noProgress.offCourse, false);
+  assert.deepStrictEqual(noProgress.rows[1], ['Distance', '2.3 km']);
 });
