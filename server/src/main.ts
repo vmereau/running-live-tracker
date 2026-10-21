@@ -1,5 +1,5 @@
 // Composition root: the only module that may import every other module.
-import { mkdirSync } from 'node:fs';
+import { closeSync, mkdirSync, openSync, writeSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { createKeyLookup } from './config/key-lookup.ts';
 import { ConfigError, loadConfig } from './config/load-config.ts';
@@ -39,6 +39,45 @@ try {
   throw err;
 }
 
+// Logs go to stdout and are appended to <DATA_DIR>/logs/server-<UTC date of boot>.log.
+// Both writes are synchronous, so no line is lost when process.exit() follows a log call.
+const logPath = resolve(dataDir, 'logs', `server-${new Date().toISOString().slice(0, 10)}.log`);
+let logFd: number;
+try {
+  mkdirSync(resolve(dataDir, 'logs'), { recursive: true });
+  logFd = openSync(logPath, 'a');
+} catch (err) {
+  console.error(`Cannot open the log file ${logPath}: ${(err as Error).message}`);
+  process.exit(1);
+}
+
+/** writeSync until the whole line is written; retries EAGAIN (a full non-blocking pipe). */
+function writeAll(fd: number, line: string): void {
+  let buf = Buffer.from(line, 'utf8');
+  while (buf.length > 0) {
+    try {
+      buf = buf.subarray(writeSync(fd, buf));
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'EAGAIN') throw err;
+    }
+  }
+}
+
+const logStream = {
+  write(line: string): void {
+    try {
+      writeAll(1, line);
+    } catch {
+      // stdout is gone (closed pipe): the log file still gets the line.
+    }
+    try {
+      writeAll(logFd, line);
+    } catch {
+      // Disk full or I/O error: keep serving, stdout still has the line.
+    }
+  },
+};
+
 const dbPath = resolve(dataDir, 'tracker.db');
 let store: Store;
 try {
@@ -59,8 +98,7 @@ try {
 }
 const ingest = createIngest({ store, findRunner: createKeyLookup(config), projection, now: Date.now });
 
-// JSON logs to stdout; writing them under data/logs is Story 4.2.
-const app = buildApp({ config, ingest, projection, now: Date.now, logger: true, webRoot, course });
+const app = buildApp({ config, ingest, projection, now: Date.now, logger: { stream: logStream }, webRoot, course });
 
 let shuttingDown = false;
 async function shutdown(signal: string): Promise<void> {
@@ -77,6 +115,7 @@ async function shutdown(signal: string): Promise<void> {
   } finally {
     // After app.close(): no request can still be writing.
     store.close();
+    closeSync(logFd);
   }
   process.exit(exitCode);
 }
@@ -85,11 +124,12 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) process.on(signal, () => vo
 try {
   await app.listen({ host: HOST, port });
   app.log.info(
-    { eventId: config.eventId, configPath, dataDir, dbPath, webRoot, courseLengthM: course?.lengthM ?? null },
+    { eventId: config.eventId, configPath, dataDir, dbPath, logPath, webRoot, courseLengthM: course?.lengthM ?? null },
     'server ready',
   );
 } catch (err) {
   app.log.error({ err }, 'failed to start');
   store.close();
+  closeSync(logFd);
   process.exit(1);
 }

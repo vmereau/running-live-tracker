@@ -15,6 +15,7 @@
     "keygen": "node server/scripts/keygen.ts",
     "simulate": "node server/scripts/simulate-runner.ts",
     "backup": "node server/scripts/backup.ts",
+    "race-check": "node server/scripts/race-check.ts",
     "prepare": "git config core.hooksPath .githooks"
   },
   "devDependencies": {

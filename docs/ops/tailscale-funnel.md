@@ -5,6 +5,9 @@ Funnel on port 443, which terminates TLS on the tailnet node and proxies to
 localhost. There is no tunnel-specific code in the server. Cloudflare Quick
 Tunnels, port forwarding and raw public IPs are forbidden.
 
+For race day (Funnel and the server back on their own after a reboot, `pnpm race-check`),
+see [race-readiness.md](race-readiness.md).
+
 This note also records the Story 1.2 spike: does a long-lived SSE stream
 (`GET /api/v1/live`) survive Funnel to a phone on mobile data? The answer decides
 Story 1.6's transport: SSE, or polling `GET /api/v1/snapshot` every 5 s.

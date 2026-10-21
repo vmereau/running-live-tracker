@@ -6,6 +6,8 @@ in the active config's `[opensAt, closesAt]` window. Sessions outside it are sti
 and acked, just never shown, so test-run positions never appear in the race.
 
 Public access (Tailscale Funnel) is covered in [tailscale-funnel.md](tailscale-funnel.md).
+Keeping the home PC up for the race (autostart, `pnpm race-check`, logs, race-week
+checklist) is covered in [race-readiness.md](race-readiness.md).
 
 ## Two configs
 

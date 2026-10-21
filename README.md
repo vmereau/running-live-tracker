@@ -68,6 +68,7 @@ Without `coursePath` the event has no course: `hasCourse` is `false` and
 | `pnpm dev` | Start the server on `127.0.0.1` |
 | `pnpm keygen <runnerId>` | Make a new runner key: prints the key (for the runner's phone only), its `keyHash` and a runner entry to paste into `config/event.json` |
 | `pnpm backup` | Write a consistent copy of `<DATA_DIR>/tracker.db` (SQLite online backup, safe while the server runs) to `<DATA_DIR>/backups/tracker-<UTC time>.db` and print its path (see [docs/ops/events-and-backups.md](docs/ops/events-and-backups.md)) |
+| `pnpm race-check --base-url <url> [--config <file>]` | Race-readiness check of the home PC: public health, live `eventId` = config `eventId`, event window, runners, course, Windows sleep/hibernate on AC. One `PASS`/`FAIL`/`SKIP` line per check, exit 1 on any `FAIL` (see [docs/ops/race-readiness.md](docs/ops/race-readiness.md)) |
 | `pnpm simulate --base-url <url> --gpx <file> --key <k> …` | Replay a GPX file as one or more simulated runners through the real ingest API (see [Simulating runners](#simulating-runners)) |
 | `pnpm --filter web build` | Build the web app (`index.html` map + `diagnostic.html`) into `web/dist/` |
 | `pnpm --filter web dev` | Vite dev server for the web app; `/api` is proxied to `http://127.0.0.1:8787` |
@@ -293,13 +294,15 @@ Manual check of finishing uploads after Stop (real phone, live map open):
 
 Spectators reach the server only through Tailscale Funnel. Setup, commands and the
 Story 1.2 live-stream test: [docs/ops/tailscale-funnel.md](docs/ops/tailscale-funnel.md).
+Keeping the home PC up for the race (server restarted at logon and after a crash, power
+settings, `pnpm race-check`, the race-week checklist): [docs/ops/race-readiness.md](docs/ops/race-readiness.md).
 
 ## Environment variables
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `PORT` | `8787` | HTTP port. The server always binds `127.0.0.1` only. |
-| `DATA_DIR` | `<repo>/data` | Data folder (git-ignored), created at boot if missing. Holds `tracker.db`, the append-only SQLite fix log (WAL mode, so `tracker.db-wal`/`-shm` sit next to it while the server runs; never copy these files while it is running). `backups/` holds the `pnpm backup` copies. Log files arrive in Story 4.2 (logs go to stdout for now). |
+| `DATA_DIR` | `<repo>/data` | Data folder (git-ignored), created at boot if missing. Holds `tracker.db`, the append-only SQLite fix log (WAL mode, so `tracker.db-wal`/`-shm` sit next to it while the server runs; never copy these files while it is running). `backups/` holds the `pnpm backup` copies. `logs/` holds the server's JSON logs: every line goes to stdout and is appended to `logs/server-<UTC date of boot>.log` (no raw keys, no request bodies); under the Windows supervisor also `stdout.log`, `stderr-*.log` and `supervisor.log` (see [docs/ops/race-readiness.md](docs/ops/race-readiness.md)). |
 | `EVENT_CONFIG` | `<repo>/config/event.json` | Event config, validated at boot; the server refuses to start if it is invalid |
 
 Example: `EVENT_CONFIG=config/event.example.json pnpm dev`.

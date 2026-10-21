@@ -111,7 +111,9 @@ function waitForReady(child: ReturnType<typeof startMain>) {
 
 test('boots with the example config and listens on 127.0.0.1 only', async () => {
   const port = await freePort();
-  const child = startMain({ PORT: String(port) });
+  const dataDir = join(mkdtempSync(join(tmpdir(), 'rlt-data-')), 'data');
+  const bootDay = new Date().toISOString().slice(0, 10);
+  const child = startMain({ PORT: String(port), DATA_DIR: dataDir });
   try {
     const boot = waitForReady(child);
     await boot.ready;
@@ -123,6 +125,16 @@ test('boots with the example config and listens on 127.0.0.1 only', async () => 
 
     const ready = logs.find((l) => l['msg'] === 'server ready');
     assert.equal(ready?.['webRoot'], join(import.meta.dirname, '..', '..', 'web', 'dist'));
+
+    // The logs are also appended to <DATA_DIR>/logs/server-<UTC date of boot>.log.
+    const logPath = String(ready?.['logPath']);
+    const today = new Date().toISOString().slice(0, 10);
+    assert.ok(
+      [bootDay, today].some((day) => logPath === join(dataDir, 'logs', `server-${day}.log`)),
+      `unexpected logPath ${logPath}`,
+    );
+    const fileLines = readFileSync(logPath, 'utf8').trim().split('\n').map((l) => JSON.parse(l) as Record<string, unknown>);
+    assert.ok(fileLines.some((l) => l['msg'] === 'server ready' && l['logPath'] === logPath));
 
     const res = await fetch(`http://127.0.0.1:${port}/api/v1/health`);
     assert.equal(res.status, 200);
@@ -184,8 +196,11 @@ test('ingest end to end: keygen key, HTTP batch twice, one copy in DATA_DIR/trac
       assert.equal(line['runnerId'], 'alice');
       assert.equal(typeof line['clockSkewMs'], 'number');
     }
+    const logFile = readFileSync(String(logs.find((l) => l['msg'] === 'server ready')?.['logPath']), 'utf8');
+    assert.ok(logFile.includes('ingest batch accepted'), 'the log file gets the same lines as stdout');
     for (const secret of [key, '48.8566', '2.3522', '48.8567', '2.3524']) {
       assert.ok(!raw.text.includes(secret), `logs must not contain ${secret}`);
+      assert.ok(!logFile.includes(secret), `the log file must not contain ${secret}`);
     }
   } finally {
     child.kill();
@@ -377,6 +392,7 @@ test('live projection end to end: track then runner after a POST, same snapshot 
   const port = await freePort();
   const base = `http://127.0.0.1:${port}`;
   const getSnapshot = async () => Snapshot.parse(await (await fetch(`${base}/api/v1/snapshot`)).json());
+  const bootDay = new Date().toISOString().slice(0, 10);
   const first = startMain({ ...env, PORT: String(port) });
   let before: Snapshot;
   try {
@@ -421,7 +437,13 @@ test('live projection end to end: track then runner after a POST, same snapshot 
 
   const second = startMain({ ...env, PORT: String(port) });
   try {
-    await waitForReady(second).ready;
+    const boot = waitForReady(second);
+    await boot.ready;
+    // A restart appends to the boot day's log file instead of truncating it.
+    const logPath = String(boot.logs.find((l) => l['msg'] === 'server ready')?.['logPath']);
+    const readyLines = readFileSync(logPath, 'utf8').split('\n').filter((l) => l.includes('"msg":"server ready"'));
+    const sameDay = logPath.endsWith(`server-${bootDay}.log`); // false only if the boots straddle midnight UTC
+    assert.equal(readyLines.length, sameDay ? 2 : 1);
     const after = await getSnapshot();
     assert.deepStrictEqual({ ...after, serverNow: 0 }, { ...before, serverNow: 0 });
   } finally {
