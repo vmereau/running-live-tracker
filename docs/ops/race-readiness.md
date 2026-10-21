@@ -4,7 +4,8 @@ The race depends on one Windows PC at home: the tracker server (one Node process
 Tailscale daemon must stay up for the whole race and come back on their own after a reboot
 or a crash, with nobody touching the PC (AD-14). This runbook covers the one-time setup, the
 reboot test, `pnpm race-check`, the logs, `pnpm session-report`, the public dry run, the
-phone soak test and the race-week checklist.
+phone soak test, the two-runner test run (`pnpm run-log`, tolerance, tuning) and the
+race-week checklist.
 
 Related notes: [tailscale-funnel.md](tailscale-funnel.md) (public access through Funnel) and
 [events-and-backups.md](events-and-backups.md) (test-run and race configs, switching, backups).
@@ -330,6 +331,141 @@ Results (one row per runner phone):
 | | | | | | | | |
 | | | | | | | | |
 
+## Two-runner test run
+
+The SPEC success signal, for real: both runners on their own phones at the same time, the race
+course loaded, and a friend following them on a phone browser from start to finish. It is also
+the one planned chance to measure how far the page is from each runner's watch (NFR7). Run it
+under the **test-run config**, never the race config.
+
+Before:
+
+1. **Config**: `config/event.test-run.json` (see
+   [events-and-backups.md](events-and-backups.md#two-configs)) with both runners, their keys, the
+   **race** `coursePath`, and a window covering the test run (disjoint from the race window). The
+   task runs it (*Switching events* under [Register the logon task](#3-register-the-logon-task)),
+   and `pnpm race-check --base-url https://<host>.<tailnet>.ts.net --config config\event.test-run.json`
+   is all `PASS`.
+2. **Phones**: both set up as for the [Phone soak test](#phone-soak-test) (URL, key, *Test
+   connection* shows the test-run `eventId`, permissions, vendor battery settings), charged.
+3. **Watches**: each runner records the run on their own watch or running app as usual, started
+   at the same moment as the tracker.
+4. **Friend**: a phone on mobile data (Wi-Fi off) with the shared link
+   `https://<host>.<tailnet>.ts.net/`.
+5. **Recorder**: on the PC, start `pnpm run-log` before the start (it waits for the runners):
+
+   ```powershell
+   pnpm run-log --base-url http://127.0.0.1:8787
+   ```
+
+   Every 15 s (`--interval`) it reads `GET /api/v1/snapshot`, prints one status line and appends
+   each runner's figures (status, distance, progress, remaining, average and current pace, ETA,
+   last fix, start, end) to `data\run-logs\<eventId>-<UTC start>.csv`. Point it at localhost, not
+   at the public URL: each snapshot carries every track. A failed poll prints `poll failed: …` and
+   is retried at the next one; it never stops the recording. Leave the window open for the whole
+   run (the PC must not sleep anyway).
+
+The run:
+
+1. Both runners press **Start** on the tracker and on their watch at the start line, then lock
+   the screen and pocket the phone.
+2. The friend ticks, from start to finish:
+   - [ ] both runners are in the list, each with a marker and a track in their color;
+   - [ ] switching between the runners works at any time and shows that runner's figures;
+   - [ ] for each runner: live position, pace and stats (distance, elapsed, last-update age);
+   - [ ] for each runner: km done out of total km, and an estimated finish time (from 1 km on);
+   - [ ] the page kept updating to each runner's finish without a reload.
+3. At the finish each runner stops the watch and presses **Stop** on the tracker as soon as they
+   can, then waits until **Pending** reaches **0**.
+4. `run-log` ends by itself once every runner it saw running is stopped (or press Ctrl-C) and
+   prints, per runner: `finish` (the fix at which progress reached the course length, else the
+   Stop), `elapsed`, `distance`, `avg pace`, and one line per 5 km checkpoint with the ETA the page
+   showed there and its error against the actual finish (`+` = it predicted later than the runner
+   finished, `-` = earlier). The CSV stays for any later analysis. How exact these are:
+   - all times are **UTC**; watches and running apps show local time, so convert before comparing;
+   - the finish and each checkpoint are read from the polls, so they can be up to one
+     `--interval` (15 s) late;
+   - a `Stop pressed` finish (the course matching never reached the very end; the line says how
+     many km were left) includes the time it took to get the phone out and press Stop. Every ETA
+     error is then too negative by that much: take the finish from the watch instead and correct
+     the errors by (Stop − watch finish).
+   A runner who was already stopped before `run-log` started (an earlier session in the window)
+   shows as `not started`: their figures are not from this run.
+5. `pnpm session-report --config config\event.test-run.json`: both sessions `COMPLETE`.
+
+Success signal results:
+
+| Date | Runners | Friend's phone / browser / carrier | Checklist all ticked | Notes (what failed, when) |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
+### Tolerance: page vs watch
+
+From the `run-log` summary (page) and each runner's watch or app (watch), one block per runner.
+With a course the page's distance is the progress along the course (it never exceeds the course
+length); the watch measures the path actually run, so it usually reads a little more.
+
+| Runner | Figure | Page | Watch / app | Difference |
+| --- | --- | --- | --- | --- |
+| | Distance (km) | | | |
+| | Elapsed (h:mm:ss) | | | |
+| | Average pace (min/km) | | | |
+| | Finish time (UTC) | | | |
+| | ETA error at 5 / 10 / 15 / 20 / … km | | — | |
+| | Distance (km) | | | |
+| | Elapsed (h:mm:ss) | | | |
+| | Average pace (min/km) | | | |
+| | Finish time (UTC) | | | |
+| | ETA error at 5 / 10 / 15 / 20 / … km | | — | |
+
+**Accepted tolerance** (NFR7), written once both blocks are filled in, e.g. "distance within
+±2 %, average pace within ±5 s/km, ETA within ±5 min from half-way": _______________________.
+Differences inside it need no change. A difference outside it is a reason to tune (below), or to
+accept it here with the reason.
+
+### Tuning
+
+Only when the test run measured a difference outside the accepted tolerance, and only through the
+named constants in `server/src/domain` (AD-7, AD-8). Nothing else changes: not the projection, the
+wire contract, the web page or the app. `MAX_ACCURACY_M` (fixes with a worse accuracy are ignored,
+in `server/src/projection/apply-records.ts`) is not a tuning knob.
+
+| Constant | File | Default | Affects | Change it when |
+| --- | --- | --- | --- | --- |
+| `BACK_WINDOW_M` | `domain/progress.ts` | 50 m | how far behind progress a fix may still match | progress stalls where GPS noise puts the runner slightly behind |
+| `MIN_FORWARD_WINDOW_M` | `domain/progress.ts` | 1000 m | how far ahead a fix may match | progress jumps to a later part of the course that passes nearby |
+| `WINDOW_GROWTH_MPS` | `domain/progress.ts` | 8 m/s | how fast the forward window grows during a GPS gap | progress is stuck after a long gap (tunnel) |
+| `ON_COURSE_M` | `domain/progress.ts` | 100 m | how far from the course a fix still counts as on it | *off course* shows while on course (GPS noise between buildings), or never shows on a detour |
+| `REJOIN_FIXES` | `domain/progress.ts` | 6 | consistent fixes near the course ahead before progress jumps there | a rejoin after a gap or detour is too slow or too eager |
+| `EXPECTED_SPEED_MPS` | `domain/progress.ts` | 3 m/s | where the runner is guessed to be since the last match | progress picks the wrong one of two nearby course parts after a gap |
+| `MIN_AVG_PACE_DISTANCE_M` | `domain/stats.ts` | 100 m | when the average pace appears | the first average pace is wild |
+| `CURRENT_PACE_MIN_WINDOW_S` / `_M` | `domain/stats.ts` | 60 s / 200 m | how smooth the current pace is | the current pace jumps around (raise) or lags too much (lower) |
+| `ETA_MIN_DISTANCE_M` | `domain/eta.ts` | 1000 m | when the ETA appears | the early ETA is wild |
+| ETA basis | `domain/eta.ts` (`etaAt`) | average pace | what the ETA extrapolates from | the ETA error grows towards the end as the runner slows: a blend with the current pace may follow, still in `etaAt` only |
+
+How:
+
+1. Change the constant (or `etaAt`) in `server/src/domain`, with a comment giving the measured
+   reason and the test-run date.
+2. Update the golden tests that encode the old value (`server/src/domain/*.test.ts`, and the
+   projection tests whose expected figures move). Every other test, the live-equals-replay test
+   included, must pass unchanged.
+3. `pnpm check` all green.
+4. See the effect on the test run: take a backup on the PC (`pnpm backup`), boot a local server
+   on another port with a `DATA_DIR` holding a copy of it (as `tracker.db`) and the test-run
+   config, and run
+   `pnpm run-log --base-url http://127.0.0.1:<port> --out <scratch folder>\replay.csv` once. Pass
+   `--out`: otherwise the CSV lands in the real `data\run-logs\` next to the test run's own. Press
+   `Ctrl-C` after the first status line: every runner is already stopped, so it never ends by itself.
+   The summary then shows the runners as `not started`, but the CSV rows hold the final distance
+   and average pace recomputed from the stored log (derived values are never stored). The ETA
+   history cannot be replayed this way.
+5. Record what changed, from what to what, and why:
+
+| Date | Constant | From → to | Measured reason | Tests updated |
+| --- | --- | --- | --- | --- |
+| | | | | |
+
 ## Race-week checklist
 
 The checks `race-check` cannot automate. Tick them in race week, and again the day before:
@@ -348,5 +484,8 @@ The checks `race-check` cannot automate. Tick them in race week, and again the d
       back on the race config.
 - [ ] [Phone soak test](#phone-soak-test) passed on every runner's phone, recorded in its results
       table, with the vendor battery settings it needed still set.
+- [ ] [Two-runner test run](#two-runner-test-run) done: the friend's success-signal checklist all
+      ticked, the page-vs-watch tolerance and the accepted tolerance recorded, and any tuning it
+      called for logged with `pnpm check` green. The task is back on the race config.
 - [ ] Race morning, after switching to the race config: `pnpm race-check --base-url https://<host>.<tailnet>.ts.net`
       again, all `PASS`.

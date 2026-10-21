@@ -38,7 +38,13 @@ export function parseRaceCheckArgs(
   } catch (err) {
     throw new UsageError((err as Error).message);
   }
-  const baseUrl = values['base-url'];
+  // Same EVENT_CONFIG env and default as server/src/main.ts.
+  const configPath = resolve(values.config ?? env['EVENT_CONFIG'] ?? resolve(repoRoot, 'config', 'event.json'));
+  return { baseUrl: parseBaseUrl(values['base-url']), configPath };
+}
+
+/** Validates a --base-url value (http(s), no query or fragment) and drops trailing slashes. */
+export function parseBaseUrl(baseUrl: string | undefined): string {
   if (baseUrl === undefined) throw new UsageError('Missing --base-url');
   let url: URL;
   try {
@@ -48,9 +54,7 @@ export function parseRaceCheckArgs(
   }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') throw new UsageError('--base-url must be http:// or https://');
   if (url.search !== '' || url.hash !== '') throw new UsageError('--base-url must not have a query or fragment');
-  // Same EVENT_CONFIG env and default as server/src/main.ts.
-  const configPath = resolve(values.config ?? env['EVENT_CONFIG'] ?? resolve(repoRoot, 'config', 'event.json'));
-  return { baseUrl: baseUrl.replace(/\/+$/, ''), configPath };
+  return baseUrl.replace(/\/+$/, '');
 }
 
 /**
