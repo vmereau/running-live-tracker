@@ -106,8 +106,6 @@ curl http://127.0.0.1:8787/api/v1/health
 curl -N http://127.0.0.1:8787/api/v1/live
 ```
 
-Until Story 1.5 every runner is `notStarted` with an empty track (positions are stored, not yet shown).
-
 Posting a batch:
 
 ```sh
@@ -127,8 +125,8 @@ The runner is always the key's owner; a `runnerId` in the body is ignored.
 
 ## Simulating runners
 
-Until the Android app exists, `pnpm simulate` feeds realistic positions through
-`POST /api/v1/ingest`, behaving the way the phone will: each `--key` becomes one runner
+To test without a phone, `pnpm simulate` feeds realistic positions through
+`POST /api/v1/ingest`, behaving the way the phone does: each `--key` becomes one runner
 with its own session, records a fix every 5 s (of simulated run time) into an in-memory
 outbox while walking the GPX at a constant pace, and uploads the outbox oldest first in
 batches of at most 200 records, deleting what the server acks. Network errors, 5xx, 401
